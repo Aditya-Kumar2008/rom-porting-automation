@@ -1,0 +1,308 @@
+name: Port ColorOS to HyperOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      hyperos_url:
+        description: 'HyperOS ROM OTA URL'
+        required: true
+        default: 'https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS3.0.305.0.WFSINXM/ruan_in_global-ota_full-OS3.0.305.0.WFSINXM-user-16.0-1ede5cec45.zip'
+      coloros_url:
+        description: 'ColorOS/OOS Donor ROM OTA URL'
+        required: true
+        default: 'https://gauss-componentotacostmanual-eu.allawnofs.com/remove-5c5d9bcf3317fc5d6ad3a8606be00e4d/component-ota/25/04/17/c4488027bf0249bcac8ad63d5d7b74ac.zip'
+
+env:
+  WORK_DIR: /tmp/rom-porting
+  DEVICE_CODENAME: ruan
+  DEVICE_NAME: "Poco Pad 5G"
+  CPU_MODEL: SM7435
+  FRONT_CAM: "8"
+  BACK_CAM: "8"
+  SCREEN_SIZE: "12.1"
+  DONOR_BRAND: OnePlus
+  DONOR_MODEL: "12R 5G"
+
+jobs:
+  port-rom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          echo "=== Initial disk space ==="
+          df -h /
+          echo ""
+          echo "=== Removing preinstalled software ==="
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/hostedtoolcache
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/graalvm
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/julia*
+          sudo rm -rf /usr/local/share/miniconda
+          sudo rm -rf /usr/local/ghc
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          echo ""
+          echo "=== Disk space after cleanup ==="
+          df -h /
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq erofs-utils wget unzip zip jq curl
+          cd /tmp
+          wget -q "https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz" -O payload-dumper.tar.gz
+          tar xzf payload-dumper.tar.gz
+          sudo mv payload-dumper-go /usr/local/bin/
+          rm payload-dumper.tar.gz
+          echo "Tools installed:"
+          which payload-dumper-go fsck.erofs mkfs.erofs
+
+      - name: Create working directories
+        run: |
+          mkdir -p ${WORK_DIR}/{hyperos,coloros,extracted,output,logs}
+          echo "Directories created"
+          df -h / | tail -1
+
+      - name: Download HyperOS ROM
+        run: |
+          echo "=== Downloading HyperOS ROM ==="
+          wget --tries=3 --timeout=60 -q -O ${WORK_DIR}/hyperos/hyperos-rom.zip "${{ github.event.inputs.hyperos_url }}"
+          ls -lh ${WORK_DIR}/hyperos/hyperos-rom.zip
+          df -h / | tail -1
+
+      - name: Extract HyperOS vendor
+        run: |
+          cd ${WORK_DIR}/hyperos
+          echo "=== Extracting payload.bin ==="
+          unzip -o hyperos-rom.zip payload.bin -d .
+          rm -f hyperos-rom.zip
+          echo "=== Dumping partitions ==="
+          mkdir -p images
+          payload-dumper-go -o images payload.bin 2>&1 | tail -5
+          rm -f payload.bin
+          echo "=== Extracting vendor.img ==="
+          mkdir -p extracted/vendor
+          fsck.erofs --extract=extracted/vendor images/vendor.img 2>&1 | tail -3
+          rm -f images/vendor.img
+          if [ -f images/odm.img ]; then
+            mkdir -p extracted/odm
+            fsck.erofs --extract=extracted/odm images/odm.img 2>&1 | tail -3
+            rm -f images/odm.img
+          fi
+          rm -rf images/
+          echo "HyperOS vendor extracted"
+          df -h / | tail -1
+
+      - name: Download ColorOS ROM
+        run: |
+          echo "=== Downloading ColorOS/OOS ROM ==="
+          wget --tries=3 --timeout=60 -q -O ${WORK_DIR}/coloros/coloros-rom.zip "${{ github.event.inputs.coloros_url }}"
+          ls -lh ${WORK_DIR}/coloros/coloros-rom.zip
+          df -h / | tail -1
+
+      - name: Extract ColorOS vendor
+        run: |
+          cd ${WORK_DIR}/coloros
+          echo "=== Extracting payload.bin ==="
+          unzip -o coloros-rom.zip payload.bin -d .
+          rm -f coloros-rom.zip
+          echo "=== Dumping partitions ==="
+          mkdir -p images
+          payload-dumper-go -o images payload.bin 2>&1 | tail -5
+          rm -f payload.bin
+          echo "=== Extracting vendor.img ==="
+          mkdir -p extracted/vendor
+          fsck.erofs --extract=extracted/vendor images/vendor.img 2>&1 | tail -3
+          rm -f images/vendor.img
+          if [ -f images/odm.img ]; then
+            mkdir -p extracted/odm
+            fsck.erofs --extract=extracted/odm images/odm.img 2>&1 | tail -3
+            rm -f images/odm.img
+          fi
+          rm -rf images/
+          echo "ColorOS vendor extracted"
+          df -h / | tail -1
+
+      - name: Port vendor files
+        run: |
+          echo "=== ROM Porting ==="
+          HYPEROS_VENDOR="${WORK_DIR}/hyperos/extracted/vendor"
+          COLOROS_VENDOR="${WORK_DIR}/coloros/extracted/vendor"
+          ODM_BUILD_PROP=""
+          if [ -f "${WORK_DIR}/hyperos/extracted/odm/etc/build.prop" ]; then
+            ODM_BUILD_PROP="${WORK_DIR}/hyperos/extracted/odm/etc/build.prop"
+          elif [ -f "${HYPEROS_VENDOR}/odm/etc/build.prop" ]; then
+            ODM_BUILD_PROP="${HYPEROS_VENDOR}/odm/etc/build.prop"
+          else
+            mkdir -p "${HYPEROS_VENDOR}/odm/etc"
+            ODM_BUILD_PROP="${HYPEROS_VENDOR}/odm/etc/build.prop"
+            touch "${ODM_BUILD_PROP}"
+          fi
+          echo "ODM build.prop: ${ODM_BUILD_PROP}"
+          echo "=== Step 1: Copy group and passwd ==="
+          cp -v "${COLOROS_VENDOR}/etc/group" "${HYPEROS_VENDOR}/etc/group"
+          cp -v "${COLOROS_VENDOR}/etc/passwd" "${HYPEROS_VENDOR}/etc/passwd"
+          echo "=== Step 2: Modify ODM build.prop ==="
+          cp "${ODM_BUILD_PROP}" "${ODM_BUILD_PROP}.bak"
+          echo "" >> "${ODM_BUILD_PROP}"
+          echo "# === ColorOS Port Properties ===" >> "${ODM_BUILD_PROP}"
+          echo "ro.build.device_family=OP${CPU_MODEL}" >> "${ODM_BUILD_PROP}"
+          echo "ro.product.oplus.cpuinfo=${CPU_MODEL}" >> "${ODM_BUILD_PROP}"
+          echo "ro.product.brand=${DONOR_BRAND}" >> "${ODM_BUILD_PROP}"
+          echo "ro.product.manufacturer=${DONOR_BRAND}" >> "${ODM_BUILD_PROP}"
+          echo "ro.product.model=${DEVICE_CODENAME}" >> "${ODM_BUILD_PROP}"
+          echo "ro.vendor.oplus.market.name=${DEVICE_NAME}" >> "${ODM_BUILD_PROP}"
+          echo "ro.vendor.oplus.camera.frontCamSize=${FRONT_CAM}" >> "${ODM_BUILD_PROP}"
+          echo "ro.vendor.oplus.camera.backCamSize=${BACK_CAM}" >> "${ODM_BUILD_PROP}"
+          echo "ro.oplus.display.screenSizeInches.primary=${SCREEN_SIZE}" >> "${ODM_BUILD_PROP}"
+          echo "ro.build.version.oplusrom=V15.0" >> "${ODM_BUILD_PROP}"
+          echo "ro.vendor.audio.policy.engine.odm=true" >> "${ODM_BUILD_PROP}"
+          echo "=== Verification ==="
+          ls -la "${HYPEROS_VENDOR}/etc/group" "${HYPEROS_VENDOR}/etc/passwd"
+          grep -E "ro\.(build\.device_family|product\.oplus|product\.brand|product\.manufacturer|product\.model|vendor\.oplus|build\.version\.oplusrom|vendor\.audio)" "${ODM_BUILD_PROP}"
+          echo "Porting complete!"
+
+      - name: Repack vendor partition
+        run: |
+          echo "=== Repacking vendor.img ==="
+          HYPEROS_VENDOR="${WORK_DIR}/hyperos/extracted/vendor"
+          cd ${WORK_DIR}
+          VENDOR_SIZE_KB=$(du -sk "${HYPEROS_VENDOR}" | awk '{print $1}')
+          VENDOR_SIZE_MB=$((VENDOR_SIZE_KB / 1024 + 100))
+          echo "Vendor size: ${VENDOR_SIZE_MB} MB"
+          mkfs.erofs -zlz4hc,12 -b 4096 output/vendor.img "${HYPEROS_VENDOR}"
+          ls -lh output/vendor.img
+          echo "vendor.img repacked!"
+
+      - name: Build flashable ZIP
+        run: |
+          echo "=== Building Flashable ZIP ==="
+          cd ${WORK_DIR}
+          FLASH_DIR="flashable"
+          mkdir -p ${FLASH_DIR}/META-INF/com/android
+          python3 -c "
+          script = '''#!/sbin/sh
+          umask 022
+          ui_print() {
+            echo -n -e \"ui_print \$1\\\n\" >> /proc/self/fd/\$OUTFD
+            echo -n -e \"ui_print\\\n\" >> /proc/self/fd/\$OUTFD
+          }
+          set_progress() {
+            echo -n -e \"set_progress \$1\\\n\" >> /proc/self/fd/\$OUTFD
+          }
+          ui_print \"============================================\"
+          ui_print \"  ColorOS/OOS Port for Poco Pad 5G\"
+          ui_print \"  Based on HyperOS + OnePlus 12R vendor\"
+          ui_print \"============================================\"
+          ui_print \"\"
+          ui_print \"Mounting partitions...\"
+          mount /vendor 2>/dev/null
+          mount -o rw /vendor 2>/dev/null
+          ui_print \"Creating backup...\"
+          mkdir -p /tmp/backup
+          cp -a /vendor/etc/group /tmp/backup/ 2>/dev/null
+          cp -a /vendor/etc/passwd /tmp/backup/ 2>/dev/null
+          ui_print \"Flashing vendor partition...\"
+          set_progress 0.3
+          dd if=/tmp/vendor.img of=/dev/block/by-name/vendor bs=4096
+          sync
+          set_progress 0.9
+          ui_print \"Cleaning up...\"
+          umount /vendor 2>/dev/null
+          set_progress 1.0
+          ui_print \"\"
+          ui_print \"============================================\"
+          ui_print \"  Flash complete! Reboot your device\"
+          ui_print \"============================================\"
+          exit 0
+          '''
+          with open('${FLASH_DIR}/META-INF/com/android/update-binary', 'w') as f:
+              f.write(script)
+          "
+          python3 -c "
+          script = '''show_progress(0.1, 10);
+          package_extract_file(\"vendor.img\", \"/tmp/vendor.img\");
+          run_program(\"/sbin/sh\", \"/tmp/update-binary\");
+          '''
+          with open('${FLASH_DIR}/META-INF/com/android/updater-script', 'w') as f:
+              f.write(script)
+          "
+          cp output/vendor.img ${FLASH_DIR}/
+          cd ${FLASH_DIR}
+          ZIP_NAME="ColorOS_Port_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
+          zip -r9 ../output/${ZIP_NAME} .
+          cd ..
+          echo "Flashable ZIP: ${ZIP_NAME}"
+          ls -lh output/${ZIP_NAME}
+          echo "FLASHABLE_ZIP=${ZIP_NAME}" >> $GITHUB_ENV
+
+      - name: Upload to Gofile
+        id: gofile_upload
+        run: |
+          echo "=== Uploading to Gofile ==="
+          ZIP_FILE=$(ls ${WORK_DIR}/output/ColorOS_Port_*.zip 2>/dev/null | head -1)
+          echo "Uploading: ${ZIP_FILE}"
+          ls -lh "${ZIP_FILE}"
+          SERVER=$(curl -s https://api.gofile.io/servers | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          if data.get('status') == 'ok':
+              print(data['data']['servers'][0]['name'])
+          else:
+              print('store1')
+          " 2>/dev/null || echo "store1")
+          echo "Server: ${SERVER}"
+          RESPONSE=$(curl -F "file=@${ZIP_FILE}" "https://${SERVER}.gofile.io/uploadFile" 2>&1)
+          echo "Response: ${RESPONSE}"
+          DOWNLOAD_URL=$(echo "${RESPONSE}" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          if data.get('status') == 'ok':
+              print(data['data']['downloadPage'])
+          else:
+              print('UPLOAD_FAILED')
+          " 2>/dev/null || echo "UPLOAD_FAILED")
+          echo "DOWNLOAD URL: ${DOWNLOAD_URL}"
+          echo "download_url=${DOWNLOAD_URL}" >> $GITHUB_OUTPUT
+          VENDOR_FILE="${WORK_DIR}/output/vendor.img"
+          if [ -f "$VENDOR_FILE" ]; then
+            VENDOR_RESPONSE=$(curl -F "file=@${VENDOR_FILE}" "https://${SERVER}.gofile.io/uploadFile" 2>&1)
+            VENDOR_URL=$(echo "${VENDOR_RESPONSE}" | python3 -c "
+            import sys, json
+            data = json.load(sys.stdin)
+            if data.get('status') == 'ok':
+                print(data['data']['downloadPage'])
+            else:
+                print('N/A')
+            " 2>/dev/null || echo "N/A")
+            echo "VENDOR URL: ${VENDOR_URL}"
+            echo "vendor_url=${VENDOR_URL}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Final Summary
+        run: |
+          echo "============================================"
+          echo "  ROM PORTING COMPLETE!"
+          echo "============================================"
+          echo "  Device: ${DEVICE_NAME} (${DEVICE_CODENAME})"
+          echo "  Donor: ${DONOR_BRAND} ${DONOR_MODEL}"
+          echo ""
+          echo "  Flashable ZIP URL:"
+          echo "  ${{ steps.gofile_upload.outputs.download_url }}"
+          echo ""
+          echo "  Vendor IMG URL:"
+          echo "  ${{ steps.gofile_upload.outputs.vendor_url }}"
+          echo ""
+          echo "  WARNING: FLASH AT YOUR OWN RISK!"
+          echo "  Always backup before flashing!"
+          echo "============================================"
+          df -h / | tail -1
+

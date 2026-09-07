@@ -249,19 +249,198 @@ jobs:
       # ============================================================
       # PHASE 6: Build full ROM flashable ZIP
       # ============================================================
-      - name: Build recovery flashable ZIP
+      - name: Build recovery flashable ZIP for OrangeFox
         run: |
           FD="${WORK_DIR}/recovery-flashable"
           mkdir -p ${FD}/META-INF/com/google/android
 
-          # updater-binary for TWRP/OrangeFox
-          printf '#!/sbin/sh\nui_print() { echo "ui_print $1" > /proc/self/fd/$OUTFD; echo "ui_print" > /proc/self/fd/$OUTFD; }\nset_progress() { echo "set_progress $1" > /proc/self/fd/$OUTFD; }\nui_print "============================================"\nui_print "  ColorOS ROM Port for Poco Pad 5G"\nui_print "  Based on HyperOS + OnePlus 12R"\nui_print "============================================"\nui_print ""\nmount /system 2>/dev/null\nmount /vendor 2>/dev/null\nmount /odm 2>/dev/null\nui_print "Flashing partitions..."\nfor PART in system vendor odm; do\n  if [ -f /tmp/${PART}.img ]; then\n    ui_print "Flashing ${PART}..."\n    dd if=/tmp/${PART}.img of=/dev/block/by-name/${PART} bs=4096\n    sync\n  fi\ndone\nui_print "Done! Rebooting..."\nset_progress 1.0\nexit 0\n' > "${FD}/META-INF/com/google/android/update-binary"
+          # Create update-binary shell script for OrangeFox
+          # Handles: static partitions (boot, modem, vendor_boot) via dd
+          # Dynamic partitions (system, vendor, odm) - extracts to /tmp, user flashes via fastboot or recovery dd
+          cat > "${FD}/META-INF/com/google/android/update-binary" << 'UPDATESCRIPT'
+#!/sbin/sh
+set -e
 
-          printf 'show_progress(0.1, 5.0);\npackage_extract_file("system.img", "/tmp/system.img");\npackage_extract_file("vendor.img", "/tmp/vendor.img");\npackage_extract_file("odm.img", "/tmp/odm.img");\nrun_program("/sbin/sh", "/tmp/update-binary");\nshow_progress(1.0, 0);\n' > "${FD}/META-INF/com/google/android/updater-script"
+# UI helpers for TWRP/OrangeFox
+OUTFD=$(ps | grep -v "grep" | grep -oE "update_binary(.*)" | cut -d" " -f3)
+ui_print() { echo "ui_print $1" > /proc/self/fd/$OUTFD; echo "ui_print" > /proc/self/fd/$OUTFD; }
+set_progress() { echo "set_progress $1" > /proc/self/fd/$OUTFD; }
 
+# Detect active slot
+SLOT=$(getprop ro.boot.slot_suffix 2>/dev/null || echo "")
+ui_print "============================================"
+ui_print "  ColorOS ROM Port for Poco Pad 5G (ruan)"
+ui_print "  Based on HyperOS + OnePlus 12R"
+ui_print "  Active slot: ${SLOT:-none}"
+ui_print "============================================"
+ui_print ""
+
+# Find block device path
+for BD in /dev/block/bootdevice/by-name /dev/block/by-name /dev/block/platform/*/by-name; do
+  [ -d "$BD" ] && BLOCK_PATH="$BD" && break
+done
+ui_print "Block path: ${BLOCK_PATH}"
+
+set_progress 0.1
+
+# ============================================
+# STEP 1: Flash static partitions (dd works)
+# ============================================
+ui_print "--- Flashing static partitions ---"
+
+flash_static() {
+  local name="$1"
+  local img="/tmp/${name}.img"
+  local dev="${BLOCK_PATH}/${name}${SLOT}"
+  [ ! -b "$dev" ] && dev="${BLOCK_PATH}/${name}"
+  if [ -f "$img" ] && [ -b "$dev" ]; then
+    ui_print "Flashing ${name}..."
+    dd if="$img" of="$dev" bs=4096 2>/dev/null
+    sync
+    ui_print "  Done"
+  fi
+}
+
+# Flash boot, vendor_boot, modem, dtbo (static partitions)
+for P in boot vendor_boot modem dtbo; do
+  flash_static "$P"
+done
+
+set_progress 0.5
+
+# ============================================
+# STEP 2: Handle dynamic partitions
+# ============================================
+ui_print ""
+ui_print "--- Handling dynamic partitions ---"
+ui_print "system/vendor/odm are in super partition"
+ui_print ""
+
+# Check if lpmake/lpunpack are available
+if command -v lpunpack >/dev/null 2>&1; then
+  ui_print "Found lpunpack - will repack super"
+  SUPER_DEV="${BLOCK_PATH}/super"
+  [ -b "$SUPER_DEV" ] || SUPER_DEV="${BLOCK_PATH}/userdata"
+
+  # Extract super partition
+  ui_print "Extracting super partition..."
+  lpunpack "$SUPER_DEV" /tmp/super_extract/ 2>/dev/null
+
+  # Replace partitions
+  for P in system vendor odm; do
+    IMG="/tmp/${P}.img"
+    if [ -f "$IMG" ]; then
+      ui_print "Replacing ${P}..."
+      cp "$IMG" "/tmp/super_extract/${P}${SLOT}.img" 2>/dev/null || cp "$IMG" "/tmp/super_extract/${P}.img"
+    fi
+  done
+
+  # Repack super
+  ui_print "Repacking super..."
+  # Get super size
+  SUPER_SIZE=$(blockdev --getsize64 "$SUPER_DEV" 2>/dev/null || echo "0")
+  # Use lpmake to create new super
+  LPARGS=""
+  for P in system vendor odm product system_ext; do
+    IMG="/tmp/super_extract/${P}${SLOT}.img"
+    [ ! -f "$IMG" ] && IMG="/tmp/super_extract/${P}.img"
+    if [ -f "$IMG" ]; then
+      SIZE=$(stat -c%s "$IMG")
+      LPARGS="$LPARGS --partition ${P}${SLOT}:readonly:${SIZE}:main --image ${P}${SLOT}=${IMG}"
+    fi
+  done
+  lpmake --device-size="${SUPER_SIZE}" --metadata-slots=2     --partition system${SLOT}:readonly:0:main     --partition vendor${SLOT}:readonly:0:main     --partition odm${SLOT}:readonly:0:main     --partition product${SLOT}:readonly:0:main     --partition system_ext${SLOT}:readonly:0:main     --image system${SLOT}=/tmp/system.img     --image vendor${SLOT}=/tmp/vendor.img     --image odm${SLOT}=/tmp/odm.img     --output /tmp/super_new.img 2>/dev/null
+
+  if [ -f /tmp/super_new.img ]; then
+    ui_print "Flashing new super..."
+    dd if=/tmp/super_new.img of="$SUPER_DEV" bs=4096
+    sync
+    ui_print "Super flashed!"
+  fi
+else
+  ui_print "lpunpack not found"
+  ui_print "Flashing dynamic partitions via dd to mapper..."
+  for P in system vendor odm; do
+    IMG="/tmp/${P}.img"
+    # Try mapper path first, then by-name
+    DEV="/dev/block/mapper/${P}${SLOT}"
+    [ ! -b "$DEV" ] && DEV="${BLOCK_PATH}/${P}${SLOT}"
+    [ ! -b "$DEV" ] && DEV="${BLOCK_PATH}/${P}"
+    if [ -f "$IMG" ] && [ -b "$DEV" ]; then
+      ui_print "Flashing ${P} to ${DEV}..."
+      # Resize partition to fit image
+      SIZE=$(stat -c%s "$IMG")
+      ui_print "  Image size: $((SIZE/1048576))MB"
+      dd if="$IMG" of="$DEV" bs=4096 2>/dev/null
+      sync
+      ui_print "  Done"
+    elif [ -f "$IMG" ]; then
+      ui_print "WARNING: Cannot find device for ${P}"
+      ui_print "  Try: fastboot flash ${P} /tmp/${P}.img"
+    fi
+  done
+fi
+
+set_progress 0.9
+
+# ============================================
+# STEP 3: Cleanup
+# ============================================
+ui_print ""
+ui_print "Cleaning up..."
+rm -f /tmp/system.img /tmp/vendor.img /tmp/odm.img /tmp/boot.img /tmp/modem.img /tmp/vendor_boot.img
+rm -rf /tmp/super_extract /tmp/super_new.img
+
+set_progress 1.0
+ui_print ""
+ui_print "============================================"
+ui_print "  ROM flash complete!"
+ui_print "  Reboot to system"
+ui_print "============================================"
+exit 0
+UPDATESCRIPT
+
+          # Create updater-script (edify) - extracts images then runs update-binary
+          cat > "${FD}/META-INF/com/google/android/updater-script" << 'EDIFY'
+# ColorOS ROM Port for Poco Pad 5G
+# Extract partition images and flash them
+
+show_progress(0.1, 2.0);
+
+# Check device
+assert(getprop("ro.product.device") == "ruan" || getprop("ro.build.product") == "ruan" ||
+       getprop("ro.product.device") == "dizi" || getprop("ro.build.product") == "dizi" ||
+       getprop("ro.product.device") == "24074RPD2C" || getprop("ro.build.product") == "24074RPD2C",
+       "This ROM is for Poco Pad 5G (ruan/dizi) only!");
+
+ui_print("Extracting partition images...");
+
+# Extract all images to /tmp
+package_extract_file("system.img", "/tmp/system.img");
+package_extract_file("vendor.img", "/tmp/vendor.img");
+package_extract_file("odm.img", "/tmp/odm.img");
+package_extract_file("boot.img", "/tmp/boot.img");
+package_extract_file("vendor_boot.img", "/tmp/vendor_boot.img");
+package_extract_file("modem.img", "/tmp/modem.img");
+
+show_progress(0.3, 1.0);
+ui_print("Images extracted. Starting flash...");
+
+# Extract update-binary and run it
+package_extract_file("META-INF/com/google/android/update-binary", "/tmp/update-binary");
+run_program("/sbin/chmod", "755", "/tmp/update-binary");
+run_program("/sbin/sh", "/tmp/update-binary");
+
+show_progress(1.0, 0);
+EDIFY
+
+          # Copy images to flashable dir
           cp ${WORK_DIR}/output/system.img ${FD}/
           cp ${WORK_DIR}/output/vendor.img ${FD}/
           cp ${WORK_DIR}/output/odm.img ${FD}/ 2>/dev/null || true
+          cp ${WORK_DIR}/output/boot.img ${FD}/ 2>/dev/null || true
+          cp ${WORK_DIR}/output/vendor_boot.img ${FD}/ 2>/dev/null || true
+          cp ${WORK_DIR}/output/modem.img ${FD}/ 2>/dev/null || true
 
           cd ${FD}
           RECOVERY_ZIP="ColorOS_Recovery_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
@@ -269,6 +448,10 @@ jobs:
           echo "RECOVERY_ZIP=${RECOVERY_ZIP}" >> $GITHUB_ENV
           echo "Recovery ZIP built: ${RECOVERY_ZIP}"
           ls -lh ${WORK_DIR}/output/${RECOVERY_ZIP}
+
+          echo ""
+          echo "=== ALL OUTPUT ==="
+          ls -lh ${WORK_DIR}/output/
 
       - name: Build fastboot flashable package
         run: |

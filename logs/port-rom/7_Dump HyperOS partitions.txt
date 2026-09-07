@@ -1,0 +1,64 @@
+﻿2026-09-07T14:35:16.4998500Z ##[group]Run cd ${WORK_DIR}/hyperos
+2026-09-07T14:35:16.4998856Z [36;1mcd ${WORK_DIR}/hyperos[0m
+2026-09-07T14:35:16.4999173Z [36;1munzip -o hyperos-rom.zip payload.bin -d .[0m
+2026-09-07T14:35:16.4999505Z [36;1mrm -f hyperos-rom.zip[0m
+2026-09-07T14:35:16.4999763Z [36;1mmkdir -p images[0m
+2026-09-07T14:35:16.5000077Z [36;1mpayload-dumper-go -o images payload.bin 2>&1 | tail -5[0m
+2026-09-07T14:35:16.5000433Z [36;1mrm -f payload.bin[0m
+2026-09-07T14:35:16.5000668Z [36;1mls -lh images/[0m
+2026-09-07T14:35:16.5036585Z shell: /usr/bin/bash -e {0}
+2026-09-07T14:35:16.5036834Z env:
+2026-09-07T14:35:16.5037035Z   WORK_DIR: /tmp/rom-porting
+2026-09-07T14:35:16.5037283Z   DEVICE_CODENAME: ruan
+2026-09-07T14:35:16.5037512Z   DEVICE_NAME: Poco Pad 5G
+2026-09-07T14:35:16.5037736Z   CPU_MODEL: SM7435
+2026-09-07T14:35:16.5037942Z   FRONT_CAM: 8
+2026-09-07T14:35:16.5038130Z   BACK_CAM: 8
+2026-09-07T14:35:16.5038318Z   SCREEN_SIZE: 12.1
+2026-09-07T14:35:16.5038518Z   DONOR_BRAND: OnePlus
+2026-09-07T14:35:16.5038760Z   DONOR_MODEL: 12R 5G
+2026-09-07T14:35:16.5038969Z ##[endgroup]
+2026-09-07T14:35:16.5111412Z Archive:  hyperos-rom.zip
+2026-09-07T14:35:16.5111878Z signed by SignApk
+2026-09-07T14:35:39.1360914Z  extracting: ./payload.bin           
+2026-09-07T14:37:45.8547199Z …  
+2026-09-07T14:37:45.8547579Z …  
+2026-09-07T14:37:45.8547790Z …  
+2026-09-07T14:37:45.8548147Z …  
+2026-09-07T14:37:45.8548648Z …  
+2026-09-07T14:37:46.1114410Z total 6.8G
+2026-09-07T14:37:46.1114850Z -rwxr-xr-x 1 runner runner 200K Sep  7 14:35 abl.img
+2026-09-07T14:37:46.1115608Z -rwxr-xr-x 1 runner runner 228K Sep  7 14:35 aop.img
+2026-09-07T14:37:46.1116651Z -rwxr-xr-x 1 runner runner  12K Sep  7 14:35 aop_config.img
+2026-09-07T14:37:46.1117550Z -rwxr-xr-x 1 runner runner 1.4M Sep  7 14:35 bluetooth.img
+2026-09-07T14:37:46.1118341Z -rwxr-xr-x 1 runner runner  96M Sep  7 14:35 boot.img
+2026-09-07T14:37:46.1119120Z -rwxr-xr-x 1 runner runner 120K Sep  7 14:35 cpucp.img
+2026-09-07T14:37:46.1119803Z -rwxr-xr-x 1 runner runner  48K Sep  7 14:35 devcfg.img
+2026-09-07T14:37:46.1120516Z -rwxr-xr-x 1 runner runner  64M Sep  7 14:35 dsp.img
+2026-09-07T14:37:46.1121138Z -rwxr-xr-x 1 runner runner  23M Sep  7 14:35 dtbo.img
+2026-09-07T14:37:46.1121610Z -rwxr-xr-x 1 runner runner  88K Sep  7 14:35 featenabler.img
+2026-09-07T14:37:46.1122075Z -rwxr-xr-x 1 runner runner 1.2M Sep  7 14:35 hyp.img
+2026-09-07T14:37:46.1122527Z -rwxr-xr-x 1 runner runner 1.1M Sep  7 14:35 imagefv.img
+2026-09-07T14:37:46.1122999Z -rwxr-xr-x 1 runner runner 348K Sep  7 14:35 keymaster.img
+2026-09-07T14:37:46.1123464Z -rwxr-xr-x 1 runner runner 446M Sep  7 14:36 mi_ext.img
+2026-09-07T14:37:46.1123906Z -rwxr-xr-x 1 runner runner 315M Sep  7 14:35 modem.img
+2026-09-07T14:37:46.1124374Z -rwxr-xr-x 1 runner runner  12K Sep  7 14:35 multiimgqti.img
+2026-09-07T14:37:46.1124831Z -rwxr-xr-x 1 runner runner  23M Sep  7 14:35 odm.img
+2026-09-07T14:37:46.1125511Z -rwxr-xr-x 1 runner runner 3.3G Sep  7 14:37 product.img
+2026-09-07T14:37:46.1126217Z -rwxr-xr-x 1 runner runner  52K Sep  7 14:35 qupfw.img
+2026-09-07T14:37:46.1126698Z -rwxr-xr-x 1 runner runner 256K Sep  7 14:35 qweslicstore.img
+2026-09-07T14:37:46.1127188Z -rwxr-xr-x 1 runner runner 100M Sep  7 14:35 recovery.img
+2026-09-07T14:37:46.1127641Z -rwxr-xr-x 1 runner runner  60K Sep  7 14:35 shrm.img
+2026-09-07T14:37:46.1128081Z -rwxr-xr-x 1 runner runner 872M Sep  7 14:36 system.img
+2026-09-07T14:37:46.1128544Z -rwxr-xr-x 1 runner runner 831M Sep  7 14:36 system_ext.img
+2026-09-07T14:37:46.1128999Z -rwxr-xr-x 1 runner runner 3.2M Sep  7 14:35 tz.img
+2026-09-07T14:37:46.1129426Z -rwxr-xr-x 1 runner runner 4.1M Sep  7 14:35 uefi.img
+2026-09-07T14:37:46.1129885Z -rwxr-xr-x 1 runner runner 172K Sep  7 14:35 uefisecapp.img
+2026-09-07T14:37:46.1130357Z -rwxr-xr-x 1 runner runner 8.0K Sep  7 14:35 vbmeta.img
+2026-09-07T14:37:46.1130830Z -rwxr-xr-x 1 runner runner 4.0K Sep  7 14:35 vbmeta_system.img
+2026-09-07T14:37:46.1131312Z -rwxr-xr-x 1 runner runner 763M Sep  7 14:36 vendor.img
+2026-09-07T14:37:46.1131775Z -rwxr-xr-x 1 runner runner  96M Sep  7 14:36 vendor_boot.img
+2026-09-07T14:37:46.1132486Z -rwxr-xr-x 1 runner runner  33M Sep  7 14:36 vendor_dlkm.img
+2026-09-07T14:37:46.1132949Z -rwxr-xr-x 1 runner runner 1.2M Sep  7 14:36 xbl.img
+2026-09-07T14:37:46.1133319Z -rwxr-xr-x 1 runner runner 200K Sep  7 14:36 xbl_config.img
+2026-09-07T14:37:46.1133702Z -rwxr-xr-x 1 runner runner 784K Sep  7 14:36 xbl_ramdump.img

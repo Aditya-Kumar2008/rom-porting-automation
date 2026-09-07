@@ -1,0 +1,41 @@
+﻿2026-09-07T14:37:47.9479687Z ##[group]Run aria2c -x16 -s16 -j5 --file-allocation=none -d ${WORK_DIR}/coloros -o coloros-rom.zip "https://gauss-compota-c-fr.allawnofs.com/remove-e3fe1ae8ce09716b9b69a4d5de2a3f93/g-10eab6008d5642cf42abd2aa41f847cb/component-ota/26/07/20/3924d761f9cd42b19b55cb0bf8400819.zip?sign=d3df3fe72f7028a580d59258301942c2&t=6a9ecb3c&x-oss-signature=eMaZHDBc3062vBzRr4xjbXSLCra%2BNTOOOrSaWzkfuJo%3D&x-oss-signature-version=OSS2&x-oss-expires=1788793412&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx761f9cd42b19b55cb0bf8400819.zip?sign=aaff1e9b9eb51fbf3bbccaa50e4bb646&t=6a9ec4a9&x-oss-signature=EPR3nFc0il0d%2BPGVNkyD9B5VdEbqJlh9i%2BclWmAPpZE%3D&x-oss-signature-version=OSS2&x-oss-expires=1788791729&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx"
+2026-09-07T14:37:47.9493236Z [36;1maria2c -x16 -s16 -j5 --file-allocation=none -d ${WORK_DIR}/coloros -o coloros-rom.zip "https://gauss-compota-c-fr.allawnofs.com/remove-e3fe1ae8ce09716b9b69a4d5de2a3f93/g-10eab6008d5642cf42abd2aa41f847cb/component-ota/26/07/20/3924d761f9cd42b19b55cb0bf8400819.zip?sign=d3df3fe72f7028a580d59258301942c2&t=6a9ecb3c&x-oss-signature=eMaZHDBc3062vBzRr4xjbXSLCra%2BNTOOOrSaWzkfuJo%3D&x-oss-signature-version=OSS2&x-oss-expires=1788793412&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx761f9cd42b19b55cb0bf8400819.zip?sign=aaff1e9b9eb51fbf3bbccaa50e4bb646&t=6a9ec4a9&x-oss-signature=EPR3nFc0il0d%2BPGVNkyD9B5VdEbqJlh9i%2BclWmAPpZE%3D&x-oss-signature-version=OSS2&x-oss-expires=1788791729&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx"[0m
+2026-09-07T14:37:47.9550879Z shell: /usr/bin/bash -e {0}
+2026-09-07T14:37:47.9551284Z env:
+2026-09-07T14:37:47.9551627Z   WORK_DIR: /tmp/rom-porting
+2026-09-07T14:37:47.9552062Z   DEVICE_CODENAME: ruan
+2026-09-07T14:37:47.9552466Z   DEVICE_NAME: Poco Pad 5G
+2026-09-07T14:37:47.9552893Z   CPU_MODEL: SM7435
+2026-09-07T14:37:47.9553283Z   FRONT_CAM: 8
+2026-09-07T14:37:47.9553627Z   BACK_CAM: 8
+2026-09-07T14:37:47.9553979Z   SCREEN_SIZE: 12.1
+2026-09-07T14:37:47.9554354Z   DONOR_BRAND: OnePlus
+2026-09-07T14:37:47.9554754Z   DONOR_MODEL: 12R 5G
+2026-09-07T14:37:47.9555150Z ##[endgroup]
+2026-09-07T14:37:47.9794164Z 
+2026-09-07T14:37:47.9794847Z 09/07 14:37:47 [[1;32mNOTICE[0m] Downloading 1 item(s)
+2026-09-07T14:37:55.9311807Z [#6c2090 0B/0B CN:1 DL:0B]
+2026-09-07T14:37:55.9312589Z [#6c2090 0B/0B CN:1 DL:0B]
+2026-09-07T14:37:55.9313139Z [#6c2090 0B/0B CN:1 DL:0B]
+2026-09-07T14:37:55.9313676Z [#6c2090 0B/0B CN:1 DL:0B]
+2026-09-07T14:37:55.9314208Z [#6c2090 0B/0B CN:1 DL:0B]
+2026-09-07T14:37:55.9314769Z [#6c2090 0B/0B CN:1 DL:0B]
+2026-09-07T14:37:55.9315306Z [#6c2090 0B/0B CN:1 DL:0B]
+2026-09-07T14:37:55.9315647Z 
+2026-09-07T14:37:55.9324455Z 09/07 14:37:55 [[1;31mERROR[0m] CUID#7 - Download aborted. URI=https://gauss-compota-c-fr.allawnofs.com/remove-e3fe1ae8ce09716b9b69a4d5de2a3f93/g-10eab6008d5642cf42abd2aa41f847cb/component-ota/26/07/20/3924d761f9cd42b19b55cb0bf8400819.zip?sign=d3df3fe72f7028a580d59258301942c2&t=6a9ecb3c&x-oss-signature=eMaZHDBc3062vBzRr4xjbXSLCra%2BNTOOOrSaWzkfuJo%3D&x-oss-signature-version=OSS2&x-oss-expires=1788793412&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx761f9cd42b19b55cb0bf8400819.zip?sign=aaff1e9b9eb51fbf3bbccaa50e4bb646&t=6a9ec4a9&x-oss-signature=EPR3nFc0il0d%2BPGVNkyD9B5VdEbqJlh9i%2BclWmAPpZE%3D&x-oss-signature-version=OSS2&x-oss-expires=1788791729&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx
+2026-09-07T14:37:55.9334778Z Exception: [AbstractCommand.cc:351] errorCode=22 URI=https://gauss-compota-c-fr.allawnofs.com/remove-e3fe1ae8ce09716b9b69a4d5de2a3f93/g-10eab6008d5642cf42abd2aa41f847cb/component-ota/26/07/20/3924d761f9cd42b19b55cb0bf8400819.zip?sign=d3df3fe72f7028a580d59258301942c2&t=6a9ecb3c&x-oss-signature=eMaZHDBc3062vBzRr4xjbXSLCra%2BNTOOOrSaWzkfuJo%3D&x-oss-signature-version=OSS2&x-oss-expires=1788793412&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx761f9cd42b19b55cb0bf8400819.zip?sign=aaff1e9b9eb51fbf3bbccaa50e4bb646&t=6a9ec4a9&x-oss-signature=EPR3nFc0il0d%2BPGVNkyD9B5VdEbqJlh9i%2BclWmAPpZE%3D&x-oss-signature-version=OSS2&x-oss-expires=1788791729&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx
+2026-09-07T14:37:55.9340738Z   -> [HttpSkipResponseCommand.cc:239] errorCode=22 The response status is not successful. status=403
+2026-09-07T14:37:55.9341472Z 
+2026-09-07T14:37:55.9342259Z 09/07 14:37:55 [[1;32mNOTICE[0m] Download GID#6c20903c88d37c86 not complete: /tmp/rom-porting/coloros/coloros-rom.zip
+2026-09-07T14:37:55.9342734Z 
+2026-09-07T14:37:55.9342823Z Download Results:
+2026-09-07T14:37:55.9343047Z gid   |stat|avg speed  |path/URI
+2026-09-07T14:37:55.9343336Z ======+====+===========+=======================================================
+2026-09-07T14:37:55.9343724Z 6c2090|ERR |       0B/s|/tmp/rom-porting/coloros/coloros-rom.zip
+2026-09-07T14:37:55.9343980Z 
+2026-09-07T14:37:55.9344063Z Status Legend:
+2026-09-07T14:37:55.9344428Z (ERR):error occurred.
+2026-09-07T14:37:55.9344685Z 
+2026-09-07T14:37:55.9344936Z aria2 will resume download if the transfer is restarted.
+2026-09-07T14:37:55.9345762Z If there are any errors, then see the log file. See '-l' option in help/man page for details.
+2026-09-07T14:37:55.9357665Z ##[error]Process completed with exit code 22.

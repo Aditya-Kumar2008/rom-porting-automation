@@ -249,57 +249,85 @@ jobs:
       # ============================================================
       # PHASE 6: Build full ROM flashable ZIP
       # ============================================================
-      - name: Build flashable ZIP
+      - name: Build recovery flashable ZIP
         run: |
-          FD="${WORK_DIR}/flashable"
-          mkdir -p ${FD}/META-INF/com/android
+          FD="${WORK_DIR}/recovery-flashable"
+          mkdir -p ${FD}/META-INF/com/google/android
 
-          # Write update-binary
-          printf '#!/sbin/sh\numask 022\nui_print() {\n  echo -n -e "ui_print $1\\n" >> /proc/self/fd/$OUTFD\n  echo -n -e "ui_print\\n" >> /proc/self/fd/$OUTFD\n}\nset_progress() {\n  echo -n -e "set_progress $1\\n" >> /proc/self/fd/$OUTFD\n}\nui_print "============================================"\nui_print "  Full ColorOS ROM Port for Poco Pad 5G"\nui_print "  Based on HyperOS + OnePlus 12R"\nui_print "============================================"\nui_print ""\nmount /system 2>/dev/null\nmount /vendor 2>/dev/null\nmount /odm 2>/dev/null\nmkdir -p /tmp/backup\ncp -a /vendor/etc/group /tmp/backup/ 2>/dev/null\ncp -a /vendor/etc/passwd /tmp/backup/ 2>/dev/null\nCOUNT=0\nfor PART in system system_ext product vendor odm boot vendor_boot modem; do\n  FILE="/tmp/${PART}.img"\n  if [ -f "$FILE" ]; then\n    COUNT=$((COUNT+1))\n    ui_print "Flashing ${PART}..."\n    set_progress 0.${COUNT}\n    dd if="$FILE" of="/dev/block/by-name/${PART}" bs=4096 2>/dev/null\n    sync\n  fi\ndone\nset_progress 1.0\numount /system 2>/dev/null\numount /vendor 2>/dev/null\numount /odm 2>/dev/null\nui_print "============================================"\nui_print "  Full ROM flash complete! Reboot now"\nui_print "============================================"\nexit 0\n' > "${FD}/META-INF/com/android/update-binary"
+          # updater-binary for TWRP/OrangeFox
+          printf '#!/sbin/sh\nui_print() { echo "ui_print $1" > /proc/self/fd/$OUTFD; echo "ui_print" > /proc/self/fd/$OUTFD; }\nset_progress() { echo "set_progress $1" > /proc/self/fd/$OUTFD; }\nui_print "============================================"\nui_print "  ColorOS ROM Port for Poco Pad 5G"\nui_print "  Based on HyperOS + OnePlus 12R"\nui_print "============================================"\nui_print ""\nmount /system 2>/dev/null\nmount /vendor 2>/dev/null\nmount /odm 2>/dev/null\nui_print "Flashing partitions..."\nfor PART in system vendor odm; do\n  if [ -f /tmp/${PART}.img ]; then\n    ui_print "Flashing ${PART}..."\n    dd if=/tmp/${PART}.img of=/dev/block/by-name/${PART} bs=4096\n    sync\n  fi\ndone\nui_print "Done! Rebooting..."\nset_progress 1.0\nexit 0\n' > "${FD}/META-INF/com/google/android/update-binary"
 
-          # Write updater-script
-          printf 'show_progress(0.1, 10);\npackage_extract_file("system.img", "/tmp/system.img");\npackage_extract_file("vendor.img", "/tmp/vendor.img");\npackage_extract_file("odm.img", "/tmp/odm.img");\nrun_program("/sbin/sh", "/tmp/update-binary");\n' > "${FD}/META-INF/com/android/updater-script"
+          printf 'show_progress(0.1, 5.0);\npackage_extract_file("system.img", "/tmp/system.img");\npackage_extract_file("vendor.img", "/tmp/vendor.img");\npackage_extract_file("odm.img", "/tmp/odm.img");\nrun_program("/sbin/sh", "/tmp/update-binary");\nshow_progress(1.0, 0);\n' > "${FD}/META-INF/com/google/android/updater-script"
 
-          # Copy ALL images
-          for img in ${WORK_DIR}/output/*.img; do
-            [ -f "$img" ] && cp -v "$img" ${FD}/
-          done
+          cp ${WORK_DIR}/output/system.img ${FD}/
+          cp ${WORK_DIR}/output/vendor.img ${FD}/
+          cp ${WORK_DIR}/output/odm.img ${FD}/ 2>/dev/null || true
 
           cd ${FD}
-          ZIP_NAME="Full_ColorOS_ROM_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
-          zip -r9 ${WORK_DIR}/output/${ZIP_NAME} .
-          echo "FLASHABLE_ZIP=${ZIP_NAME}" >> $GITHUB_ENV
-          echo "Built: ${ZIP_NAME}"
-          ls -lh ${WORK_DIR}/output/${ZIP_NAME}
+          RECOVERY_ZIP="ColorOS_Recovery_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
+          zip -r9 ${WORK_DIR}/output/${RECOVERY_ZIP} .
+          echo "RECOVERY_ZIP=${RECOVERY_ZIP}" >> $GITHUB_ENV
+          echo "Recovery ZIP built: ${RECOVERY_ZIP}"
+          ls -lh ${WORK_DIR}/output/${RECOVERY_ZIP}
+
+      - name: Build fastboot flashable package
+        run: |
+          FD="${WORK_DIR}/fastboot-flashable"
+          mkdir -p ${FD}/images
+
+          # Copy all images
+          for img in ${WORK_DIR}/output/*.img; do
+            [ -f "$img" ] && cp -v "$img" ${FD}/images/
+          done
+
+          # Create flash script
+          printf '#!/bin/bash\n# Fastboot flash script for Poco Pad 5G (ruan)\n# ColorOS ROM Port based on HyperOS + OnePlus 12R\n\nset -e\necho "============================================"\necho "  ColorOS ROM Fastboot Flasher"\necho "  Device: Poco Pad 5G (ruan)"\necho "============================================"\necho ""\necho "Make sure device is in fastboot mode:"\necho "  adb reboot bootloader"\necho ""\nread -p "Press Enter to continue..."\n\nIMAGES_DIR="$(dirname "$0")/images"\n\n# Flash partitions\nfor PART in system vendor odm boot vendor_boot; do\n  IMG="${IMAGES_DIR}/${PART}.img"\n  if [ -f "$IMG" ]; then\n    echo "Flashing ${PART}..."\n    fastboot flash ${PART} "$IMG"\n  fi\ndone\n\n# Flash modem if present\nif [ -f "${IMAGES_DIR}/modem.img" ]; then\n  echo "Flashing modem..."\n  fastboot flash modem "${IMAGES_DIR}/modem.img"\nfi\n\necho ""\necho "============================================"\necho "  Flash complete! Rebooting..."\necho "============================================"\nfastboot reboot\n' > "${FD}/flash_all.sh"
+          chmod +x "${FD}/flash_all.sh"
+
+          # Create Windows batch file
+          printf '@echo off\necho ============================================\necho   ColorOS ROM Fastboot Flasher\necho   Device: Poco Pad 5G (ruan)\necho ============================================\necho.\necho Make sure device is in fastboot mode:\necho   adb reboot bootloader\necho.\npause\n\nfor %%%%f in (images\\*.img) do (\n  echo Flashing %%%%~nf...\n  fastboot flash %%%%~nf "images\\%%%%f"\n)\n\necho.\necho ============================================\necho   Flash complete! Rebooting...\necho ============================================\nfastboot reboot\npause\n' > "${FD}/flash_all.bat"
+
+          cd ${FD}
+          FASTBOOT_ZIP="ColorOS_Fastboot_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
+          zip -r9 ${WORK_DIR}/output/${FASTBOOT_ZIP} .
+          echo "FASTBOOT_ZIP=${FASTBOOT_ZIP}" >> $GITHUB_ENV
+          echo "Fastboot ZIP built: ${FASTBOOT_ZIP}"
+          ls -lh ${WORK_DIR}/output/${FASTBOOT_ZIP}
+
+          echo ""
+          echo "=== ALL OUTPUT ==="
+          ls -lh ${WORK_DIR}/output/
 
       # ============================================================
       # PHASE 7: Upload to Gofile
       # ============================================================
-      - name: Upload to Gofile
-        id: gofile_upload
+      - name: Upload to Catbox.moe
+        id: catbox_upload
         run: |
-          SERVER=$(curl -s https://api.gofile.io/servers | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['data']['servers'][0]['name'])" 2>/dev/null || echo "store1")
-          echo "Server: ${SERVER}"
+          # Catbox.moe: 25GB limit, no account needed
+          upload_catbox() {
+            local file="$1"
+            local bn=$(basename "$file")
+            echo "Uploading ${bn} ($(du -h "$file" | cut -f1))..."
+            RESP=$(curl -s -F "reqtype=fileupload" -F "fileToUpload=@${file}" "https://catbox.moe/user/api.php" 2>&1)
+            if echo "$RESP" | grep -q "https://files.catbox.moe"; then
+              echo "${bn}: ${RESP}"
+              echo "${bn%.img}_url=${RESP}" >> $GITHUB_OUTPUT
+            else
+              echo "${bn}: FAILED (${RESP})"
+            fi
+          }
 
           # Upload full ROM ZIP
           ZF="${WORK_DIR}/output/${FLASHABLE_ZIP}"
           if [ -f "${ZF}" ]; then
-            RESP=$(curl -F "file=@${ZF}" "https://${SERVER}.gofile.io/uploadFile" 2>&1)
-            URL=$(echo "${RESP}" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['data']['downloadPage'])" 2>/dev/null || echo "FAILED")
-            echo "Full ROM: ${URL}"
-            echo "download_url=${URL}" >> $GITHUB_OUTPUT
+            upload_catbox "$ZF"
           fi
 
           # Upload individual images
           for img in ${WORK_DIR}/output/*.img; do
             [ -f "$img" ] || continue
-            BN=$(basename "$img")
-            echo "Uploading ${BN}..."
-            RESP=$(curl -F "file=@${img}" "https://${SERVER}.gofile.io/uploadFile" 2>&1)
-            URL=$(echo "${RESP}" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['data']['downloadPage'])" 2>/dev/null || echo "N/A")
-            echo "${BN}: ${URL}"
-            KEY=$(echo "${BN}" | sed 's/\.img$//')
-            echo "${KEY}_url=${URL}" >> $GITHUB_OUTPUT
+            upload_catbox "$img"
           done
 
       - name: Final Summary
@@ -310,7 +338,7 @@ jobs:
           echo "  Device: ${DEVICE_NAME} (${DEVICE_CODENAME})"
           echo "  Donor: ${DONOR_BRAND} ${DONOR_MODEL}"
           echo ""
-          echo "  Full ROM ZIP: ${{ steps.gofile_upload.outputs.download_url }}"
+          echo "  Full ROM ZIP: check Catbox links above"
           echo ""
           echo "  Individual images uploaded to Gofile"
           echo ""

@@ -1,0 +1,58 @@
+﻿2026-09-07T14:34:44.1775295Z ##[group]Run sudo apt-get update -qq
+2026-09-07T14:34:44.1776304Z [36;1msudo apt-get update -qq[0m
+2026-09-07T14:34:44.1777043Z [36;1msudo apt-get install -y -qq erofs-utils wget unzip zip jq curl aria2[0m
+2026-09-07T14:34:44.1777818Z [36;1mcd /tmp[0m
+2026-09-07T14:34:44.1778829Z [36;1mwget -q "https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz" -O pd.tar.gz[0m
+2026-09-07T14:34:44.1779983Z [36;1mtar xzf pd.tar.gz[0m
+2026-09-07T14:34:44.1780578Z [36;1msudo mv payload-dumper-go /usr/local/bin/[0m
+2026-09-07T14:34:44.1781136Z [36;1mrm pd.tar.gz[0m
+2026-09-07T14:34:44.1834841Z shell: /usr/bin/bash -e {0}
+2026-09-07T14:34:44.1835394Z env:
+2026-09-07T14:34:44.1835794Z   WORK_DIR: /tmp/rom-porting
+2026-09-07T14:34:44.1836626Z   DEVICE_CODENAME: ruan
+2026-09-07T14:34:44.1837061Z   DEVICE_NAME: Poco Pad 5G
+2026-09-07T14:34:44.1837431Z   CPU_MODEL: SM7435
+2026-09-07T14:34:44.1837848Z   FRONT_CAM: 8
+2026-09-07T14:34:44.1838109Z   BACK_CAM: 8
+2026-09-07T14:34:44.1838400Z   SCREEN_SIZE: 12.1
+2026-09-07T14:34:44.1838670Z   DONOR_BRAND: OnePlus
+2026-09-07T14:34:44.1839011Z   DONOR_MODEL: 12R 5G
+2026-09-07T14:34:44.1839377Z ##[endgroup]
+2026-09-07T14:34:53.9387305Z Selecting previously unselected package erofs-utils.
+2026-09-07T14:34:53.9692420Z (Reading database ... 
+2026-09-07T14:34:53.9692968Z (Reading database ... 5%
+2026-09-07T14:34:53.9693500Z (Reading database ... 10%
+2026-09-07T14:34:53.9693993Z (Reading database ... 15%
+2026-09-07T14:34:53.9694465Z (Reading database ... 20%
+2026-09-07T14:34:53.9694955Z (Reading database ... 25%
+2026-09-07T14:34:53.9695304Z (Reading database ... 30%
+2026-09-07T14:34:53.9695630Z (Reading database ... 35%
+2026-09-07T14:34:53.9696241Z (Reading database ... 40%
+2026-09-07T14:34:53.9696722Z (Reading database ... 45%
+2026-09-07T14:34:53.9697222Z (Reading database ... 50%
+2026-09-07T14:34:53.9747127Z (Reading database ... 55%
+2026-09-07T14:34:54.1696822Z (Reading database ... 60%
+2026-09-07T14:34:54.3116066Z (Reading database ... 65%
+2026-09-07T14:34:54.5150916Z (Reading database ... 70%
+2026-09-07T14:34:54.6175182Z (Reading database ... 75%
+2026-09-07T14:34:54.8280173Z (Reading database ... 80%
+2026-09-07T14:34:55.0234165Z (Reading database ... 85%
+2026-09-07T14:34:55.1829468Z (Reading database ... 90%
+2026-09-07T14:34:55.3341149Z (Reading database ... 95%
+2026-09-07T14:34:55.3341963Z (Reading database ... 100%
+2026-09-07T14:34:55.3342824Z (Reading database ... 201676 files and directories currently installed.)
+2026-09-07T14:34:55.3382850Z Preparing to unpack .../erofs-utils_1.7.1-1build2_amd64.deb ...
+2026-09-07T14:34:55.3413915Z Unpacking erofs-utils (1.7.1-1build2) ...
+2026-09-07T14:34:55.3843993Z Setting up erofs-utils (1.7.1-1build2) ...
+2026-09-07T14:34:55.3873346Z Processing triggers for man-db (2.12.0-4build2) ...
+2026-09-07T14:34:55.3895423Z Not building database; man-db/auto-update is not 'true'.
+2026-09-07T14:34:56.0183011Z 
+2026-09-07T14:34:56.0183574Z Running kernel seems to be up-to-date.
+2026-09-07T14:34:56.0184491Z 
+2026-09-07T14:34:56.0184724Z No services need to be restarted.
+2026-09-07T14:34:56.0197726Z 
+2026-09-07T14:34:56.0198198Z No containers need to be restarted.
+2026-09-07T14:34:56.0198558Z 
+2026-09-07T14:34:56.0198768Z No user sessions are running outdated binaries.
+2026-09-07T14:34:56.0199129Z 
+2026-09-07T14:34:56.0199462Z No VM guests are running outdated hypervisor (qemu) binaries on this host.

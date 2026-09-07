@@ -1,0 +1,84 @@
+﻿2026-09-07T14:33:54.3617514Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-07T14:33:54.3625741Z ##[group]Run actions/checkout@v4
+2026-09-07T14:33:54.3626803Z with:
+2026-09-07T14:33:54.3627341Z   repository: Aditya-Kumar2008/rom-porting-automation
+2026-09-07T14:33:54.3631203Z   token: ***
+2026-09-07T14:33:54.3631623Z   ssh-strict: true
+2026-09-07T14:33:54.3632054Z   ssh-user: git
+2026-09-07T14:33:54.3632489Z   persist-credentials: true
+2026-09-07T14:33:54.3632967Z   clean: true
+2026-09-07T14:33:54.3633399Z   sparse-checkout-cone-mode: true
+2026-09-07T14:33:54.3633926Z   fetch-depth: 1
+2026-09-07T14:33:54.3634344Z   fetch-tags: false
+2026-09-07T14:33:54.3634774Z   show-progress: true
+2026-09-07T14:33:54.3635211Z   lfs: false
+2026-09-07T14:33:54.3635622Z   submodules: false
+2026-09-07T14:33:54.3636283Z   set-safe-directory: true
+2026-09-07T14:33:54.3636799Z   allow-unsafe-pr-checkout: false
+2026-09-07T14:33:54.3637565Z env:
+2026-09-07T14:33:54.3638000Z   WORK_DIR: /tmp/rom-porting
+2026-09-07T14:33:54.3638520Z   DEVICE_CODENAME: ruan
+2026-09-07T14:33:54.3639039Z   DEVICE_NAME: Poco Pad 5G
+2026-09-07T14:33:54.3639521Z   CPU_MODEL: SM7435
+2026-09-07T14:33:54.3639948Z   FRONT_CAM: 8
+2026-09-07T14:33:54.3640348Z   BACK_CAM: 8
+2026-09-07T14:33:54.3640764Z   SCREEN_SIZE: 12.1
+2026-09-07T14:33:54.3641192Z   DONOR_BRAND: OnePlus
+2026-09-07T14:33:54.3641638Z   DONOR_MODEL: 12R 5G
+2026-09-07T14:33:54.3642074Z ##[endgroup]
+2026-09-07T14:33:54.4659652Z Syncing repository: Aditya-Kumar2008/rom-porting-automation
+2026-09-07T14:33:54.4662351Z ##[group]Getting Git version info
+2026-09-07T14:33:54.4663492Z Working directory is '/home/runner/work/rom-porting-automation/rom-porting-automation'
+2026-09-07T14:33:54.4664723Z [command]/usr/bin/git version
+2026-09-07T14:33:54.4740503Z git version 2.55.0
+2026-09-07T14:33:54.4763745Z ##[endgroup]
+2026-09-07T14:33:54.4779613Z Temporarily overriding HOME='/home/runner/work/_temp/58c094a9-7b42-4c38-b6d9-dd951379d8a2' before making global git config changes
+2026-09-07T14:33:54.4781948Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-07T14:33:54.4785564Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/rom-porting-automation/rom-porting-automation
+2026-09-07T14:33:54.4838877Z Deleting the contents of '/home/runner/work/rom-porting-automation/rom-porting-automation'
+2026-09-07T14:33:54.4842507Z ##[group]Initializing the repository
+2026-09-07T14:33:54.4848989Z [command]/usr/bin/git init /home/runner/work/rom-porting-automation/rom-porting-automation
+2026-09-07T14:33:54.4955473Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-07T14:33:54.4957720Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-07T14:33:54.4960005Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-07T14:33:54.4962104Z hint: call:
+2026-09-07T14:33:54.4963375Z hint:
+2026-09-07T14:33:54.4964351Z hint: 	git config --global init.defaultBranch <name>
+2026-09-07T14:33:54.4965395Z hint:
+2026-09-07T14:33:54.4966881Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-07T14:33:54.4968583Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-07T14:33:54.4969895Z hint:
+2026-09-07T14:33:54.4970763Z hint: 	git branch -m <name>
+2026-09-07T14:33:54.4971709Z hint:
+2026-09-07T14:33:54.4973272Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-07T14:33:54.4975309Z Initialized empty Git repository in /home/runner/work/rom-porting-automation/rom-porting-automation/.git/
+2026-09-07T14:33:54.4978803Z [command]/usr/bin/git remote add origin https://github.com/Aditya-Kumar2008/rom-porting-automation
+2026-09-07T14:33:54.5028371Z ##[endgroup]
+2026-09-07T14:33:54.5030588Z ##[group]Disabling automatic garbage collection
+2026-09-07T14:33:54.5034543Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-07T14:33:54.5071307Z ##[endgroup]
+2026-09-07T14:33:54.5073140Z ##[group]Setting up auth
+2026-09-07T14:33:54.5080240Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-07T14:33:54.5114141Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-07T14:33:54.5489532Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-07T14:33:54.5534664Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-07T14:33:54.5771296Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-07T14:33:54.5809486Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-07T14:33:54.6035794Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-07T14:33:54.6096647Z ##[endgroup]
+2026-09-07T14:33:54.6098164Z ##[group]Fetching the repository
+2026-09-07T14:33:54.6108797Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +b7ea540cdec39a8b94897712fdd72ce44171966c:refs/remotes/origin/improved-porting-workflow
+2026-09-07T14:33:55.0171543Z From https://github.com/Aditya-Kumar2008/rom-porting-automation
+2026-09-07T14:33:55.0173667Z  * [new ref]         b7ea540cdec39a8b94897712fdd72ce44171966c -> origin/improved-porting-workflow
+2026-09-07T14:33:55.0177568Z ##[endgroup]
+2026-09-07T14:33:55.0179026Z ##[group]Determining the checkout info
+2026-09-07T14:33:55.0181046Z ##[endgroup]
+2026-09-07T14:33:55.0188336Z [command]/usr/bin/git sparse-checkout disable
+2026-09-07T14:33:55.0240083Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-07T14:33:55.0278654Z ##[group]Checking out the ref
+2026-09-07T14:33:55.0282704Z [command]/usr/bin/git checkout --progress --force -B improved-porting-workflow refs/remotes/origin/improved-porting-workflow
+2026-09-07T14:33:55.0337529Z Switched to a new branch 'improved-porting-workflow'
+2026-09-07T14:33:55.0344374Z branch 'improved-porting-workflow' set up to track 'origin/improved-porting-workflow'.
+2026-09-07T14:33:55.0350382Z ##[endgroup]
+2026-09-07T14:33:55.0399836Z [command]/usr/bin/git log -1 --format=%H
+2026-09-07T14:33:55.0431697Z b7ea540cdec39a8b94897712fdd72ce44171966c

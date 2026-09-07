@@ -36,106 +36,117 @@ jobs:
         run: |
           echo "=== Initial disk space ==="
           df -h /
-          echo ""
-          echo "=== Removing preinstalled software ==="
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/hostedtoolcache
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/graalvm
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/share/chromium
-          sudo rm -rf /usr/local/julia*
-          sudo rm -rf /usr/local/share/miniconda
-          sudo rm -rf /usr/local/ghc
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache /usr/share/dotnet \
+            /usr/local/graalvm /usr/local/share/powershell /usr/local/share/chromium \
+            /usr/local/julia* /usr/local/share/miniconda /usr/local/ghc
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
-          echo ""
-          echo "=== Disk space after cleanup ==="
+          echo "=== After cleanup ==="
           df -h /
 
       - name: Install tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq erofs-utils wget unzip zip jq curl
+          sudo apt-get install -y -qq erofs-utils wget unzip zip jq curl aria2
           cd /tmp
           wget -q "https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz" -O payload-dumper.tar.gz
           tar xzf payload-dumper.tar.gz
           sudo mv payload-dumper-go /usr/local/bin/
           rm payload-dumper.tar.gz
-          echo "Tools installed:"
-          which payload-dumper-go fsck.erofs mkfs.erofs
+          echo "Tools: $(which payload-dumper-go fsck.erofs mkfs.erofs)"
 
       - name: Create working directories
         run: |
-          mkdir -p ${WORK_DIR}/{hyperos,coloros,extracted,output,logs}
-          echo "Directories created"
+          mkdir -p ${WORK_DIR}/{hyperos,coloros,output}
           df -h / | tail -1
 
+      # ============================================================
+      # PHASE 1: Download & dump HyperOS ROM (target)
+      # ============================================================
       - name: Download HyperOS ROM
         run: |
           echo "=== Downloading HyperOS ROM ==="
-          wget --tries=3 --timeout=60 -q -O ${WORK_DIR}/hyperos/hyperos-rom.zip "${{ github.event.inputs.hyperos_url }}"
+          aria2c -x16 -s16 -j5 --file-allocation=none \
+            -d ${WORK_DIR}/hyperos -o hyperos-rom.zip \
+            "${{ github.event.inputs.hyperos_url }}"
           ls -lh ${WORK_DIR}/hyperos/hyperos-rom.zip
-          df -h / | tail -1
 
-      - name: Extract HyperOS vendor
+      - name: Dump HyperOS partitions
         run: |
           cd ${WORK_DIR}/hyperos
-          echo "=== Extracting payload.bin ==="
           unzip -o hyperos-rom.zip payload.bin -d .
           rm -f hyperos-rom.zip
-          echo "=== Dumping partitions ==="
           mkdir -p images
           payload-dumper-go -o images payload.bin 2>&1 | tail -5
           rm -f payload.bin
-          echo "=== Extracting vendor.img ==="
-          mkdir -p extracted/vendor
-          fsck.erofs --extract=extracted/vendor images/vendor.img 2>&1 | tail -3
-          rm -f images/vendor.img
-          if [ -f images/odm.img ]; then
-            mkdir -p extracted/odm
-            fsck.erofs --extract=extracted/odm images/odm.img 2>&1 | tail -3
-            rm -f images/odm.img
-          fi
-          rm -rf images/
-          echo "HyperOS vendor extracted"
-          df -h / | tail -1
+          echo "=== HyperOS images ==="
+          ls -lh images/
 
+      - name: Extract HyperOS EROFS images
+        run: |
+          cd ${WORK_DIR}/hyperos
+          for img in vendor odm; do
+            if [ -f "images/${img}.img" ]; then
+              echo "Extracting ${img}.img..."
+              mkdir -p "extracted/${img}"
+              fsck.erofs --extract="extracted/${img}" "images/${img}.img" 2>&1 | tail -2
+              rm -f "images/${img}.img"
+              echo "  Files: $(find extracted/${img} -type f | wc -l)"
+            fi
+          done
+          echo "=== HyperOS extracted ==="
+          ls -lh images/ 2>/dev/null
+          ls -d extracted/*/ 2>/dev/null
+
+      # ============================================================
+      # PHASE 2: Download & dump ColorOS ROM (donor)
+      # ============================================================
       - name: Download ColorOS ROM
         run: |
-          echo "=== Downloading ColorOS/OOS ROM ==="
-          wget --tries=3 --timeout=60 -q -O ${WORK_DIR}/coloros/coloros-rom.zip "${{ github.event.inputs.coloros_url }}"
+          echo "=== Downloading ColorOS ROM ==="
+          aria2c -x16 -s16 -j5 --file-allocation=none \
+            -d ${WORK_DIR}/coloros -o coloros-rom.zip \
+            "${{ github.event.inputs.coloros_url }}"
           ls -lh ${WORK_DIR}/coloros/coloros-rom.zip
-          df -h / | tail -1
 
-      - name: Extract ColorOS vendor
+      - name: Dump ColorOS partitions
         run: |
           cd ${WORK_DIR}/coloros
-          echo "=== Extracting payload.bin ==="
           unzip -o coloros-rom.zip payload.bin -d .
           rm -f coloros-rom.zip
-          echo "=== Dumping partitions ==="
           mkdir -p images
           payload-dumper-go -o images payload.bin 2>&1 | tail -5
           rm -f payload.bin
-          echo "=== Extracting vendor.img ==="
-          mkdir -p extracted/vendor
-          fsck.erofs --extract=extracted/vendor images/vendor.img 2>&1 | tail -3
-          rm -f images/vendor.img
-          if [ -f images/odm.img ]; then
-            mkdir -p extracted/odm
-            fsck.erofs --extract=extracted/odm images/odm.img 2>&1 | tail -3
-            rm -f images/odm.img
-          fi
-          rm -rf images/
-          echo "ColorOS vendor extracted"
-          df -h / | tail -1
+          echo "=== ColorOS images ==="
+          ls -lh images/
 
-      - name: Port vendor files
+      - name: Extract ColorOS EROFS images
         run: |
-          echo "=== ROM Porting ==="
+          cd ${WORK_DIR}/coloros
+          for img in vendor odm system system_ext product \
+                     my_product my_manifest my_region my_heytap \
+                     my_bigball my_carrier my_engineering my_stock; do
+            if [ -f "images/${img}.img" ]; then
+              echo "Extracting ${img}.img ($(du -h images/${img}.img | cut -f1))..."
+              mkdir -p "extracted/${img}"
+              fsck.erofs --extract="extracted/${img}" "images/${img}.img" 2>&1 | tail -2
+              rm -f "images/${img}.img"
+              echo "  Files: $(find extracted/${img} -type f | wc -l)"
+            fi
+          done
+          echo "=== ColorOS extracted ==="
+          ls -d extracted/*/ 2>/dev/null
+
+      # ============================================================
+      # PHASE 3: COS&OOS Vendor Port (Steps 1-5)
+      # ============================================================
+      - name: "COS&OOS: Vendor port"
+        run: |
+          echo "=== COS&OOS PORTING GUIDE ==="
           HYPEROS_VENDOR="${WORK_DIR}/hyperos/extracted/vendor"
           COLOROS_VENDOR="${WORK_DIR}/coloros/extracted/vendor"
+
+          # Find ODM build.prop
           ODM_BUILD_PROP=""
           if [ -f "${WORK_DIR}/hyperos/extracted/odm/etc/build.prop" ]; then
             ODM_BUILD_PROP="${WORK_DIR}/hyperos/extracted/odm/etc/build.prop"
@@ -146,111 +157,348 @@ jobs:
             ODM_BUILD_PROP="${HYPEROS_VENDOR}/odm/etc/build.prop"
             touch "${ODM_BUILD_PROP}"
           fi
-          echo "ODM build.prop: ${ODM_BUILD_PROP}"
-          echo "=== Step 1: Copy group and passwd ==="
+
+          echo "--- Step 3: Copy group and passwd ---"
           cp -v "${COLOROS_VENDOR}/etc/group" "${HYPEROS_VENDOR}/etc/group"
           cp -v "${COLOROS_VENDOR}/etc/passwd" "${HYPEROS_VENDOR}/etc/passwd"
-          echo "=== Step 2: Modify ODM build.prop ==="
-          cp "${ODM_BUILD_PROP}" "${ODM_BUILD_PROP}.bak"
-          echo "" >> "${ODM_BUILD_PROP}"
-          echo "# === ColorOS Port Properties ===" >> "${ODM_BUILD_PROP}"
-          echo "ro.build.device_family=OP${CPU_MODEL}" >> "${ODM_BUILD_PROP}"
-          echo "ro.product.oplus.cpuinfo=${CPU_MODEL}" >> "${ODM_BUILD_PROP}"
-          echo "ro.product.brand=${DONOR_BRAND}" >> "${ODM_BUILD_PROP}"
-          echo "ro.product.manufacturer=${DONOR_BRAND}" >> "${ODM_BUILD_PROP}"
-          echo "ro.product.model=${DEVICE_CODENAME}" >> "${ODM_BUILD_PROP}"
-          echo "ro.vendor.oplus.market.name=${DEVICE_NAME}" >> "${ODM_BUILD_PROP}"
-          echo "ro.vendor.oplus.camera.frontCamSize=${FRONT_CAM}" >> "${ODM_BUILD_PROP}"
-          echo "ro.vendor.oplus.camera.backCamSize=${BACK_CAM}" >> "${ODM_BUILD_PROP}"
-          echo "ro.oplus.display.screenSizeInches.primary=${SCREEN_SIZE}" >> "${ODM_BUILD_PROP}"
-          echo "ro.build.version.oplusrom=V15.0" >> "${ODM_BUILD_PROP}"
-          echo "ro.vendor.audio.policy.engine.odm=true" >> "${ODM_BUILD_PROP}"
-          echo "=== Verification ==="
-          ls -la "${HYPEROS_VENDOR}/etc/group" "${HYPEROS_VENDOR}/etc/passwd"
-          grep -E "ro\.(build\.device_family|product\.oplus|product\.brand|product\.manufacturer|product\.model|vendor\.oplus|build\.version\.oplusrom|vendor\.audio)" "${ODM_BUILD_PROP}"
-          echo "Porting complete!"
 
-      - name: Repack vendor partition
+          echo "--- Step 4: Modify ODM build.prop ---"
+          cp "${ODM_BUILD_PROP}" "${ODM_BUILD_PROP}.bak"
+          cat >> "${ODM_BUILD_PROP}" << EOF
+
+# === ColorOS Port Properties ===
+ro.build.device_family=OP${CPU_MODEL}
+ro.product.oplus.cpuinfo=${CPU_MODEL}
+ro.product.brand=${DONOR_BRAND}
+ro.product.manufacturer=${DONOR_BRAND}
+ro.product.model=${DEVICE_CODENAME}
+ro.vendor.oplus.market.name=${DEVICE_NAME}
+ro.vendor.oplus.camera.frontCamSize=${FRONT_CAM}
+ro.vendor.oplus.camera.backCamSize=${BACK_CAM}
+ro.oplus.display.screenSizeInches.primary=${SCREEN_SIZE}
+ro.build.version.oplusrom=V15.0
+ro.vendor.audio.policy.engine.odm=true
+EOF
+          echo "=== Vendor port done ==="
+          grep -E "device_family|cpuinfo|brand|manufacturer|model|market.name|camera|display|oplusrom|audio" "${ODM_BUILD_PROP}"
+
+      # ============================================================
+      # PHASE 4: bbk_rom_porting Guide (Steps 5-17)
+      # ============================================================
+
+      # Step 7: Delete my_* folders from system
+      - name: "bbk Step 7: Clean system my_* folders"
+        run: |
+          echo "=== bbk Step 7: Delete my_* folders from system ==="
+          SYSTEM="${WORK_DIR}/coloros/extracted/system"
+          for d in my_product my_manifest my_region my_heytap my_bigball my_carrier my_engineering my_stock; do
+            if [ -d "${SYSTEM}/${d}" ]; then
+              echo "Deleting system/${d}"
+              rm -rf "${SYSTEM}/${d}"
+            fi
+          done
+          echo "System cleaned"
+
+      # Step 8: Add my_* partitions into root of system
+      - name: "bbk Step 8: Add my_* to system root"
+        run: |
+          echo "=== bbk Step 8: Add my_* to system root ==="
+          SYSTEM="${WORK_DIR}/coloros/extracted/system"
+          for d in my_product my_manifest my_region my_heytap my_bigball my_carrier my_engineering my_stock; do
+            SRC="${WORK_DIR}/coloros/extracted/${d}"
+            if [ -d "${SRC}" ]; then
+              echo "Copying ${d} into system root..."
+              cp -a "${SRC}" "${SYSTEM}/"
+              echo "  Files: $(find ${SYSTEM}/${d} -type f | wc -l)"
+            fi
+          done
+          echo "=== my_* added to system ==="
+
+      # Step 9: Modify my_manifest/build.prop
+      - name: "bbk Step 9: Modify my_manifest/build.prop"
+        run: |
+          echo "=== bbk Step 9: my_manifest ==="
+          MANIFEST="${WORK_DIR}/coloros/extracted/system/my_manifest/etc/build.prop"
+          if [ -f "${MANIFEST}" ]; then
+            echo "Before:"
+            cat "${MANIFEST}"
+            sed -i '/first.api/d' "${MANIFEST}"
+            if grep -q "market.name" "${MANIFEST}"; then
+              sed -i "s|.*market.name.*|ro.vendor.oplus.market.name=${DEVICE_NAME}|" "${MANIFEST}"
+            else
+              echo "ro.vendor.oplus.market.name=${DEVICE_NAME}" >> "${MANIFEST}"
+            fi
+            echo ""
+            echo "After:"
+            cat "${MANIFEST}"
+          else
+            echo "my_manifest/etc/build.prop not found!"
+            find "${WORK_DIR}/coloros/extracted/system/my_manifest" -type f 2>/dev/null | head -20
+          fi
+
+      # Step 10: Add apex to system_ext/apex
+      - name: "bbk Step 10: Add VNDK apex to system_ext"
+        run: |
+          echo "=== bbk Step 10: Add apex ==="
+          SYSTEM_EXT="${WORK_DIR}/coloros/extracted/system_ext"
+          mkdir -p "${SYSTEM_EXT}/apex"
+          if [ -f "${{ github.workspace }}/system_ext.zip" ]; then
+            cd /tmp
+            python3 -c "
+          import zipfile
+          with zipfile.ZipFile('${{ github.workspace }}/system_ext.zip', 'r') as z:
+              z.extractall('apex-tmp')
+          "
+            find /tmp/apex-tmp -name "*.apex" -exec cp -v {} "${SYSTEM_EXT}/apex/" \;
+            echo "=== Apex files added ==="
+            ls -lh "${SYSTEM_EXT}/apex/"
+            rm -rf /tmp/apex-tmp
+          else
+            echo "system_ext.zip not found in workspace!"
+          fi
+
+      # Step 11: Add overlays to my_product
+      - name: "bbk Step 11: Add overlays to my_product"
+        run: |
+          echo "=== bbk Step 11: Add overlays ==="
+          MY_PRODUCT="${WORK_DIR}/coloros/extracted/system/my_product"
+          mkdir -p "${MY_PRODUCT}/overlay"
+          if [ -f "${{ github.workspace }}/overlay.zip" ]; then
+            cd /tmp
+            python3 -c "
+          import zipfile
+          with zipfile.ZipFile('${{ github.workspace }}/overlay.zip', 'r') as z:
+              z.extractall('overlay-tmp')
+          "
+            find /tmp/overlay-tmp -name "*.apk" -exec cp -v {} "${MY_PRODUCT}/overlay/" \;
+            echo "=== Overlays added ==="
+            ls -lh "${MY_PRODUCT}/overlay/"
+            rm -rf /tmp/overlay-tmp
+          else
+            echo "overlay.zip not found in workspace!"
+          fi
+
+      # Steps 12-15: Modify my_product/build.prop
+      - name: "bbk Steps 12-15: Modify my_product/build.prop"
+        run: |
+          echo "=== bbk Steps 12-15: my_product ==="
+          PRODUCT_PROP="${WORK_DIR}/coloros/extracted/system/my_product/etc/build.prop"
+          if [ -f "${PRODUCT_PROP}" ]; then
+            echo "Before:"
+            cat "${PRODUCT_PROP}"
+
+            # Step 12: Set oplusrom.display
+            if grep -q "oplusrom.display" "${PRODUCT_PROP}"; then
+              sed -i "s|.*oplusrom.display.*|ro.oplusrom.display=15.0 | by ${DEVICE_NAME}|" "${PRODUCT_PROP}"
+              echo "Set oplusrom.display"
+            fi
+
+            # Step 13: Erase screenhole line
+            if grep -q "screenhole" "${PRODUCT_PROP}"; then
+              sed -i '/screenhole/d' "${PRODUCT_PROP}"
+              echo "Removed screenhole"
+            fi
+
+            # Step 15: Set lcd.density to 440
+            if grep -q "lcd.density" "${PRODUCT_PROP}"; then
+              sed -i "s|lcd.density=.*|lcd.density=440|" "${PRODUCT_PROP}"
+              echo "Set lcd.density=440"
+            fi
+
+            # Step 15: Remove density/zoom lines
+            for line in "ro.density.screenzoom.fdh" "ro.density.screenzoom.qdh" \
+                        "ro.oplus.density.fhd_default" "ro.oplus.density.qhd_default" \
+                        "ro.oplus.resolution.low" "ro.oplus.resolution.high"; do
+              if grep -q "${line}" "${PRODUCT_PROP}"; then
+                sed -i "/${line}/d" "${PRODUCT_PROP}"
+                echo "Removed ${line}"
+              fi
+            done
+
+            echo ""
+            echo "After:"
+            cat "${PRODUCT_PROP}"
+          else
+            echo "my_product/etc/build.prop not found!"
+            find "${WORK_DIR}/coloros/extracted/system/my_product" -type f 2>/dev/null | head -20
+          fi
+
+      # Step 14: Add imports to system/build.prop
+      - name: "bbk Step 14: Add imports to system/build.prop"
+        run: |
+          echo "=== bbk Step 14: system/build.prop imports ==="
+          SYSTEM_PROP="${WORK_DIR}/coloros/extracted/system/build.prop"
+          if [ -f "${SYSTEM_PROP}" ]; then
+            cat >> "${SYSTEM_PROP}" << 'EOF'
+
+import /my_bigball/build.prop
+import /my_carrier/build.prop
+import /my_engineering/build.prop
+import /my_heytap/build.prop
+import /my_manifest/build.prop
+import /my_product/build.prop
+import /my_region/build.prop
+import /my_stock/build.prop
+EOF
+            echo "=== Imports added ==="
+            tail -12 "${SYSTEM_PROP}"
+          else
+            echo "system/build.prop not found!"
+          fi
+
+      # Legacy partition: merge product + system_ext into system
+      - name: "bbk Legacy: Merge product + system_ext into system"
+        run: |
+          echo "=== bbk Legacy partition merge ==="
+          SYSTEM="${WORK_DIR}/coloros/extracted/system"
+          SYSTEM_EXT="${WORK_DIR}/coloros/extracted/system_ext"
+          PRODUCT="${WORK_DIR}/coloros/extracted/product"
+
+          if [ -d "${SYSTEM_EXT}" ]; then
+            echo "Merging system_ext into system..."
+            cp -rn "${SYSTEM_EXT}/"* "${SYSTEM}/" 2>/dev/null || true
+            echo "system_ext merged"
+          fi
+
+          if [ -d "${PRODUCT}" ]; then
+            echo "Merging product into system..."
+            cp -rn "${PRODUCT}/"* "${SYSTEM}/" 2>/dev/null || true
+            echo "product merged"
+          fi
+
+          echo "=== Merge complete ==="
+          du -sh "${SYSTEM}"
+
+      # ============================================================
+      # PHASE 5: Repack all partitions
+      # ============================================================
+      - name: Repack system.img
+        run: |
+          echo "=== Repacking system.img ==="
+          SYSTEM="${WORK_DIR}/coloros/extracted/system"
+          SIZE_KB=$(du -sk "${SYSTEM}" | awk '{print $1}')
+          SIZE_MB=$((SIZE_KB / 1024 + 200))
+          echo "System size: ${SIZE_KB} KB (${SIZE_MB} MB)"
+          mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/system.img "${SYSTEM}"
+          ls -lh ${WORK_DIR}/output/system.img
+          rm -rf "${SYSTEM}"
+
+      - name: Repack vendor.img
         run: |
           echo "=== Repacking vendor.img ==="
-          HYPEROS_VENDOR="${WORK_DIR}/hyperos/extracted/vendor"
-          cd ${WORK_DIR}
-          VENDOR_SIZE_KB=$(du -sk "${HYPEROS_VENDOR}" | awk '{print $1}')
-          VENDOR_SIZE_MB=$((VENDOR_SIZE_KB / 1024 + 100))
-          echo "Vendor size: ${VENDOR_SIZE_MB} MB"
-          mkfs.erofs -zlz4hc,12 -b 4096 output/vendor.img "${HYPEROS_VENDOR}"
-          ls -lh output/vendor.img
-          echo "vendor.img repacked!"
+          VENDOR="${WORK_DIR}/hyperos/extracted/vendor"
+          mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/vendor.img "${VENDOR}"
+          ls -lh ${WORK_DIR}/output/vendor.img
+          rm -rf "${VENDOR}"
 
+      - name: Repack odm.img
+        run: |
+          echo "=== Repacking odm.img ==="
+          ODM="${WORK_DIR}/hyperos/extracted/odm"
+          if [ -d "${ODM}" ]; then
+            mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/odm.img "${ODM}"
+            ls -lh ${WORK_DIR}/output/odm.img
+            rm -rf "${ODM}"
+          else
+            echo "No ODM to repack"
+          fi
+
+      - name: Copy boot images from HyperOS
+        run: |
+          echo "=== Copying HyperOS boot images ==="
+          for img in boot.img vendor_boot.img; do
+            if [ -f "${WORK_DIR}/hyperos/images/${img}" ]; then
+              cp -v "${WORK_DIR}/hyperos/images/${img}" ${WORK_DIR}/output/
+            fi
+          done
+          echo "=== Output files ==="
+          ls -lh ${WORK_DIR}/output/
+
+      # ============================================================
+      # PHASE 6: Build flashable ZIP
+      # ============================================================
       - name: Build flashable ZIP
         run: |
           echo "=== Building Flashable ZIP ==="
-          cd ${WORK_DIR}
-          FLASH_DIR="flashable"
+          FLASH_DIR="${WORK_DIR}/flashable"
           mkdir -p ${FLASH_DIR}/META-INF/com/android
-          python3 -c "
-          script = '''#!/sbin/sh
+
+          cat > "${FLASH_DIR}/META-INF/com/android/update-binary" << 'UPDATESCRIPT'
+          #!/sbin/sh
           umask 022
           ui_print() {
-            echo -n -e \"ui_print \$1\\\n\" >> /proc/self/fd/\$OUTFD
-            echo -n -e \"ui_print\\\n\" >> /proc/self/fd/\$OUTFD
+            echo -n -e "ui_print $1\n" >> /proc/self/fd/$OUTFD
+            echo -n -e "ui_print\n" >> /proc/self/fd/$OUTFD
           }
           set_progress() {
-            echo -n -e \"set_progress \$1\\\n\" >> /proc/self/fd/\$OUTFD
+            echo -n -e "set_progress $1\n" >> /proc/self/fd/$OUTFD
           }
-          ui_print \"============================================\"
-          ui_print \"  ColorOS/OOS Port for Poco Pad 5G\"
-          ui_print \"  Based on HyperOS + OnePlus 12R vendor\"
-          ui_print \"============================================\"
-          ui_print \"\"
-          ui_print \"Mounting partitions...\"
+          ui_print "============================================"
+          ui_print "  ColorOS Port for Poco Pad 5G"
+          ui_print "  Based on HyperOS + OnePlus 12R"
+          ui_print "============================================"
+          ui_print ""
+          ui_print "Mounting partitions..."
+          mount /system 2>/dev/null
           mount /vendor 2>/dev/null
-          mount -o rw /vendor 2>/dev/null
-          ui_print \"Creating backup...\"
+          mount /odm 2>/dev/null
+          ui_print "Creating backups..."
           mkdir -p /tmp/backup
           cp -a /vendor/etc/group /tmp/backup/ 2>/dev/null
           cp -a /vendor/etc/passwd /tmp/backup/ 2>/dev/null
-          ui_print \"Flashing vendor partition...\"
-          set_progress 0.3
+          ui_print "Flashing system partition..."
+          set_progress 0.2
+          dd if=/tmp/system.img of=/dev/block/by-name/system bs=4096
+          sync
+          ui_print "Flashing vendor partition..."
+          set_progress 0.5
           dd if=/tmp/vendor.img of=/dev/block/by-name/vendor bs=4096
           sync
+          ui_print "Flashing odm partition..."
+          set_progress 0.7
+          dd if=/tmp/odm.img of=/dev/block/by-name/odm bs=4096
+          sync
           set_progress 0.9
-          ui_print \"Cleaning up...\"
+          ui_print "Cleaning up..."
+          umount /system 2>/dev/null
           umount /vendor 2>/dev/null
+          umount /odm 2>/dev/null
           set_progress 1.0
-          ui_print \"\"
-          ui_print \"============================================\"
-          ui_print \"  Flash complete! Reboot your device\"
-          ui_print \"============================================\"
+          ui_print ""
+          ui_print "============================================"
+          ui_print "  Flash complete! Reboot your device"
+          ui_print "============================================"
           exit 0
-          '''
-          with open('${FLASH_DIR}/META-INF/com/android/update-binary', 'w') as f:
-              f.write(script)
-          "
-          python3 -c "
-          script = '''show_progress(0.1, 10);
-          package_extract_file(\"vendor.img\", \"/tmp/vendor.img\");
-          run_program(\"/sbin/sh\", \"/tmp/update-binary\");
-          '''
-          with open('${FLASH_DIR}/META-INF/com/android/updater-script', 'w') as f:
-              f.write(script)
-          "
-          cp output/vendor.img ${FLASH_DIR}/
+          UPDATESCRIPT
+
+          cat > "${FLASH_DIR}/META-INF/com/android/updater-script" << 'UPDATER'
+          show_progress(0.1, 10);
+          package_extract_file("system.img", "/tmp/system.img");
+          package_extract_file("vendor.img", "/tmp/vendor.img");
+          package_extract_file("odm.img", "/tmp/odm.img");
+          run_program("/sbin/sh", "/tmp/update-binary");
+          UPDATER
+
+          cp ${WORK_DIR}/output/system.img ${FLASH_DIR}/
+          cp ${WORK_DIR}/output/vendor.img ${FLASH_DIR}/
+          cp ${WORK_DIR}/output/odm.img ${FLASH_DIR}/ 2>/dev/null || true
+
           cd ${FLASH_DIR}
           ZIP_NAME="ColorOS_Port_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
-          zip -r9 ../output/${ZIP_NAME} .
-          cd ..
+          zip -r9 ${WORK_DIR}/output/${ZIP_NAME} .
+          cd ${WORK_DIR}
           echo "Flashable ZIP: ${ZIP_NAME}"
           ls -lh output/${ZIP_NAME}
           echo "FLASHABLE_ZIP=${ZIP_NAME}" >> $GITHUB_ENV
 
+      # ============================================================
+      # PHASE 7: Upload to Gofile
+      # ============================================================
       - name: Upload to Gofile
         id: gofile_upload
         run: |
           echo "=== Uploading to Gofile ==="
-          ZIP_FILE=$(ls ${WORK_DIR}/output/ColorOS_Port_*.zip 2>/dev/null | head -1)
-          echo "Uploading: ${ZIP_FILE}"
-          ls -lh "${ZIP_FILE}"
+
           SERVER=$(curl -s https://api.gofile.io/servers | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
@@ -260,9 +508,12 @@ jobs:
               print('store1')
           " 2>/dev/null || echo "store1")
           echo "Server: ${SERVER}"
-          RESPONSE=$(curl -F "file=@${ZIP_FILE}" "https://${SERVER}.gofile.io/uploadFile" 2>&1)
-          echo "Response: ${RESPONSE}"
-          DOWNLOAD_URL=$(echo "${RESPONSE}" | python3 -c "
+
+          ZIP_FILE="${WORK_DIR}/output/${FLASHABLE_ZIP}"
+          if [ -f "${ZIP_FILE}" ]; then
+            echo "Uploading flashable ZIP..."
+            RESPONSE=$(curl -F "file=@${ZIP_FILE}" "https://${SERVER}.gofile.io/uploadFile" 2>&1)
+            DOWNLOAD_URL=$(echo "${RESPONSE}" | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
           if data.get('status') == 'ok':
@@ -270,22 +521,27 @@ jobs:
           else:
               print('UPLOAD_FAILED')
           " 2>/dev/null || echo "UPLOAD_FAILED")
-          echo "DOWNLOAD URL: ${DOWNLOAD_URL}"
-          echo "download_url=${DOWNLOAD_URL}" >> $GITHUB_OUTPUT
-          VENDOR_FILE="${WORK_DIR}/output/vendor.img"
-          if [ -f "$VENDOR_FILE" ]; then
-            VENDOR_RESPONSE=$(curl -F "file=@${VENDOR_FILE}" "https://${SERVER}.gofile.io/uploadFile" 2>&1)
-            VENDOR_URL=$(echo "${VENDOR_RESPONSE}" | python3 -c "
-            import sys, json
-            data = json.load(sys.stdin)
-            if data.get('status') == 'ok':
-                print(data['data']['downloadPage'])
-            else:
-                print('N/A')
-            " 2>/dev/null || echo "N/A")
-            echo "VENDOR URL: ${VENDOR_URL}"
-            echo "vendor_url=${VENDOR_URL}" >> $GITHUB_OUTPUT
+            echo "Flashable ZIP URL: ${DOWNLOAD_URL}"
+            echo "download_url=${DOWNLOAD_URL}" >> $GITHUB_OUTPUT
           fi
+
+          for img in system.img vendor.img odm.img; do
+            FILE="${WORK_DIR}/output/${img}"
+            if [ -f "${FILE}" ]; then
+              echo "Uploading ${img}..."
+              RESP=$(curl -F "file=@${FILE}" "https://${SERVER}.gofile.io/uploadFile" 2>&1)
+              URL=$(echo "${RESP}" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          if data.get('status') == 'ok':
+              print(data['data']['downloadPage'])
+          else:
+              print('N/A')
+          " 2>/dev/null || echo "N/A")
+              echo "${img} URL: ${URL}"
+              echo "${img%.img}_url=${URL}" >> $GITHUB_OUTPUT
+            fi
+          done
 
       - name: Final Summary
         run: |
@@ -295,14 +551,15 @@ jobs:
           echo "  Device: ${DEVICE_NAME} (${DEVICE_CODENAME})"
           echo "  Donor: ${DONOR_BRAND} ${DONOR_MODEL}"
           echo ""
-          echo "  Flashable ZIP URL:"
+          echo "  Flashable ZIP:"
           echo "  ${{ steps.gofile_upload.outputs.download_url }}"
           echo ""
-          echo "  Vendor IMG URL:"
-          echo "  ${{ steps.gofile_upload.outputs.vendor_url }}"
+          echo "  Individual images:"
+          echo "  system:  ${{ steps.gofile_upload.outputs.system_url }}"
+          echo "  vendor:  ${{ steps.gofile_upload.outputs.vendor_url }}"
+          echo "  odm:     ${{ steps.gofile_upload.outputs.odm_url }}"
           echo ""
           echo "  WARNING: FLASH AT YOUR OWN RISK!"
           echo "  Always backup before flashing!"
           echo "============================================"
           df -h / | tail -1
-

@@ -301,33 +301,29 @@ jobs:
       # ============================================================
       # PHASE 7: Upload to Gofile
       # ============================================================
-      - name: Upload to Catbox.moe
-        id: catbox_upload
+      - name: Upload to file.io
+        id: fileio_upload
         run: |
-          # Catbox.moe: 25GB limit, no account needed
-          upload_catbox() {
+          upload_fileio() {
             local file="$1"
             local bn=$(basename "$file")
-            echo "Uploading ${bn} ($(du -h "$file" | cut -f1))..."
-            RESP=$(curl -s -F "reqtype=fileupload" -F "fileToUpload=@${file}" "https://catbox.moe/user/api.php" 2>&1)
-            if echo "$RESP" | grep -q "https://files.catbox.moe"; then
-              echo "${bn}: ${RESP}"
-              echo "${bn%.img}_url=${RESP}" >> $GITHUB_OUTPUT
-            else
-              echo "${bn}: FAILED (${RESP})"
-            fi
+            local size=$(du -h "$file" | cut -f1)
+            echo "Uploading ${bn} (${size})..."
+            RESP=$(curl -s -F "file=@${file}" "https://file.io" 2>&1)
+            URL=$(echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('link','FAILED'))" 2>/dev/null || echo "FAILED")
+            echo "${bn}: ${URL}"
+            KEY=$(echo "${bn}" | sed 's/\.img$//' | tr '.' '_')
+            echo "${KEY}_url=${URL}" >> $GITHUB_OUTPUT
           }
 
-          # Upload full ROM ZIP
+          # Upload full ROM ZIP (7GB)
           ZF="${WORK_DIR}/output/${FLASHABLE_ZIP}"
-          if [ -f "${ZF}" ]; then
-            upload_catbox "$ZF"
-          fi
+          [ -f "$ZF" ] && upload_fileio "$ZF"
 
           # Upload individual images
           for img in ${WORK_DIR}/output/*.img; do
             [ -f "$img" ] || continue
-            upload_catbox "$img"
+            upload_fileio "$img"
           done
 
       - name: Final Summary

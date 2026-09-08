@@ -261,27 +261,26 @@ jobs:
           echo "=== ALL OUTPUT ==="
           ls -lh ${WORK_DIR}/output/
 
-      - name: Upload to Pixeldrain
-        id: pixeldrain_upload
+      - name: Upload to transfer.sh
+        id: upload_step
         run: |
-          upload_pixeldrain() {
+          upload_transfer() {
             local file="$1"
             local bn=$(basename "$file")
             local size=$(du -h "$file" | cut -f1)
             echo "Uploading ${bn} (${size})..."
-            RESP=$(curl -s -T "$file" "https://pixeldrain.com/api/file/" 2>&1)
-            FILE_ID=$(echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('id',''))" 2>/dev/null)
-            if [ -n "$FILE_ID" ] && [ "$FILE_ID" != "None" ]; then
-              echo "${bn}: https://pixeldrain.com/u/${FILE_ID}"
+            URL=$(curl -s --upload-file "$file" "https://transfer.sh/${bn}" 2>&1)
+            if echo "$URL" | grep -q "http"; then
+              echo "${bn}: ${URL}"
             else
-              echo "${bn}: FAILED (${RESP})"
+              echo "${bn}: FAILED (${URL})"
             fi
           }
           ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
-          [ -f "$ZF" ] && upload_pixeldrain "$ZF"
+          [ -f "$ZF" ] && upload_transfer "$ZF"
           for img in ${WORK_DIR}/output/*.img; do
             [ -f "$img" ] || continue
-            upload_pixeldrain "$img"
+            upload_transfer "$img"
           done
 
       - name: Final Summary

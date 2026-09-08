@@ -281,13 +281,8 @@ jobs:
           
           # Setup rclone config for Google Drive service account
           mkdir -p ~/.config/rclone
-          cat > ~/.config/rclone/rclone.conf <<RCLONE_EOF
-[gdrive]
-type = drive
-scope = drive
-service_account_base64 = ${GDRIVE_SA_KEY}
-root_folder_id = ${GDRIVE_FOLDER_ID}
-RCLONE_EOF
+          printf '[gdrive]\ntype = drive\nscope = drive\nservice_account_base64 = %s\nroot_folder_id = %s\n' \
+            "${GDRIVE_SA_KEY}" "${GDRIVE_FOLDER_ID}" > ~/.config/rclone/rclone.conf
           
           upload_gdrive() {
             local file="$1"
@@ -313,13 +308,10 @@ RCLONE_EOF
             local release_dir="/home/frs/project/${SF_PROJECT}/ColorOS_Ruan_$(date +%Y%m%d)"
             
             echo "Uploading ${bn} (${size}) to SourceForge..."
-            sshpass -p "$SF_PASSWORD" sftp -o StrictHostKeyChecking=no \
-              "${SF_USERNAME}@frs.sourceforge.net" <<SFTP_EOF
-mkdir ${release_dir}
-cd ${release_dir}
-put ${file}
-bye
-SFTP_EOF
+            printf 'mkdir %s\ncd %s\nput %s\nbye\n' \
+              "${release_dir}" "${release_dir}" "${file}" | \
+              sshpass -p "$SF_PASSWORD" sftp -o StrictHostKeyChecking=no \
+                "${SF_USERNAME}@frs.sourceforge.net"
             
             if [ $? -eq 0 ]; then
               echo "✅ SourceForge: https://sourceforge.net/projects/${SF_PROJECT}/files/ColorOS_Ruan_$(date +%Y%m%d)/${bn}"
@@ -350,4 +342,3 @@ SFTP_EOF
           echo "  Flash from OrangeFox recovery"
           echo "  WARNING: FLASH AT YOUR OWN RISK!"
           echo "============================================"
-# force re-parse

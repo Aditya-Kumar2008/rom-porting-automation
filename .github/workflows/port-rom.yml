@@ -29,7 +29,7 @@ permissions:
 jobs:
   port-rom:
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
@@ -53,7 +53,47 @@ jobs:
           sudo mv payload-dumper-go /usr/local/bin/
           rm pd.tar.gz
 
-      - name: Validate credentials and connections
+      - name: 🔐 Validate ROM URLs
+        shell: python
+        env:
+          HYPEROS_URL: ${{ github.event.inputs.hyperos_url }}
+          COLOROS_URL: ${{ github.event.inputs.coloros_url }}
+        run: |
+          import os, sys, re
+          from urllib.parse import urlparse
+
+          errors = 0
+          for name in ("HYPEROS_URL", "COLOROS_URL"):
+              url = os.environ[name].strip()
+              parsed = urlparse(url)
+              if parsed.scheme != "https":
+                  print(f"::error::{name} must use HTTPS, got: {parsed.scheme}")
+                  errors += 1
+              elif not parsed.netloc:
+                  print(f"::error::{name} has no host")
+                  errors += 1
+              else:
+                  print(f"✅ {name}: valid HTTPS URL")
+          
+          # Check for expired URLs (OSS signed URLs)
+          coloros_url = os.environ["COLOROS_URL"].strip()
+          expires_match = re.search(r'x-oss-expires=(\d+)', coloros_url)
+          if expires_match:
+              import time
+              expires_at = int(expires_match.group(1))
+              now = int(time.time())
+              if now > expires_at:
+                  print(f"::error::ColorOS URL has EXPIRED (expired {now - expires_at} seconds ago)")
+                  errors += 1
+              else:
+                  remaining = (expires_at - now) // 60
+                  print(f"⚠️ ColorOS URL expires in {remaining} minutes")
+          
+          if errors > 0:
+              sys.exit(1)
+          print("✅ All URLs validated")
+
+      - name: 🔐 Validate publishing secrets
         env:
           SF_USERNAME: ${{ secrets.SF_USERNAME }}
           SF_PASSWORD: ${{ secrets.SF_PASSWORD }}
@@ -61,76 +101,33 @@ jobs:
           GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
-          echo "=== Credential Validation ==="
-          ERRORS=0
-          
-          # Check all secrets are set
+          set -Eeuo pipefail
+          errors=0
           for var in SF_USERNAME SF_PASSWORD SF_PROJECT GDRIVE_SA_KEY GDRIVE_FOLDER_ID; do
-            if [ -z "${!var}" ]; then
-              echo "❌ Missing secret: $var"
-              ERRORS=$((ERRORS+1))
+            if [ -z "${!var:-}" ]; then
+              echo "::error::Missing required secret: ${var}"
+              errors=$((errors+1))
             else
-              echo "✅ $var is set"
+              echo "✅ ${var} is set"
             fi
           done
-          
-          # Install and test rclone
-          curl -s https://rclone.org/install.sh | bash 2>/dev/null || true
-          export PATH="/usr/local/bin:$PATH"
-          if which rclone >/dev/null 2>&1; then
-            echo "✅ rclone installed: $(rclone version | head -1)"
-          else
-            echo "❌ rclone install failed"
-            ERRORS=$((ERRORS+1))
-          fi
-          
-          # Test Google Drive service account
-          if [ -n "$GDRIVE_SA_KEY" ]; then
-            mkdir -p ~/.config/rclone
-            printf '[gdrive]\ntype = drive\nscope = drive\nservice_account_base64 = %s\nroot_folder_id = %s\n' \
-              "${GDRIVE_SA_KEY}" "${GDRIVE_FOLDER_ID}" > ~/.config/rclone/rclone.conf
-            if rclone lsd "gdrive:" --config ~/.config/rclone/rclone.conf 2>/dev/null; then
-              echo "✅ Google Drive: connected"
-            else
-              echo "⚠️ Google Drive: connection test failed (may still work)"
-            fi
-          fi
-          
-          # Test SourceForge SSH
-          if [ -n "$SF_USERNAME" ] && [ -n "$SF_PASSWORD" ]; then
-            sudo apt-get install -y sshpass >/dev/null 2>&1 || true
-            if timeout 15 sshpass -p "$SF_PASSWORD" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-              "${SF_USERNAME}@shell.sourceforge.net" "echo ok" 2>/dev/null | grep -q ok; then
-              echo "✅ SourceForge SSH: connected"
-            else
-              echo "⚠️ SourceForge SSH: connection test failed (may still work from GitHub runners)"
-            fi
-          fi
-          
-          # Test ROM URLs
-          echo "Testing HyperOS URL..."
-          if wget -q --spider "${{ github.event.inputs.hyperos_url }}" 2>/dev/null; then
-            echo "✅ HyperOS URL: accessible"
-          else
-            echo "❌ HyperOS URL: not accessible"
-            ERRORS=$((ERRORS+1))
-          fi
-          
-          echo "Testing ColorOS URL..."
-          if wget -q --spider "${{ github.event.inputs.coloros_url }}" 2>/dev/null; then
-            echo "✅ ColorOS URL: accessible"
-          else
-            echo "❌ ColorOS URL: not accessible"
-            ERRORS=$((ERRORS+1))
-          fi
-          
-          echo ""
-          if [ $ERRORS -gt 0 ]; then
-            echo "❌ Validation failed with $ERRORS errors. Fix issues above before continuing."
+          if [ $errors -gt 0 ]; then
+            echo "::error::${errors} required secrets are missing"
             exit 1
-          else
-            echo "✅ All validations passed! Starting build..."
           fi
+          echo "✅ All publishing secrets validated"
+
+      - name: 💾 Verify build storage
+        run: |
+          set -Eeuo pipefail
+          available_kb="$(df -Pk /tmp | awk 'NR == 2 {print $4}')"
+          required_kb=$((30 * 1024 * 1024))
+          df -h /tmp
+          if (( available_kb < required_kb )); then
+            echo "::error::Insufficient build storage: need at least 30 GiB free; available $((available_kb / 1024 / 1024)) GiB"
+            exit 1
+          fi
+          echo "✅ Build storage OK: $((available_kb / 1024 / 1024)) GiB available"
 
       - name: Create dirs
         run: mkdir -p ${WORK_DIR}/{hyperos,coloros,output}
@@ -340,84 +337,145 @@ jobs:
           echo "=== ALL OUTPUT ==="
           ls -lh ${WORK_DIR}/output/
 
-      - name: Upload to Google Drive and SourceForge
-        id: upload_step
+      - name: 🗜️ Validate ZIP integrity
+        run: |
+          set -Eeuo pipefail
+          ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
+          if [ ! -f "$ZF" ]; then
+            echo "::error::Recovery ZIP not found: ${RECOVERY_ZIP}"
+            exit 1
+          fi
+          
+          # ZIP integrity check (DeadZone pattern)
+          python3 -m zipfile -t "$ZF" >/dev/null || {
+            echo "::error::ZIP integrity check failed: ${RECOVERY_ZIP}"
+            exit 1
+          }
+          echo "✅ ZIP integrity verified"
+          
+          # File size reporting (DeadZone pattern)
+          final_size_bytes="$(stat -c '%s' "$ZF")"
+          final_size_human="$(python3 - "$final_size_bytes" <<'PY'
+          import sys
+          size = int(sys.argv[1])
+          value = float(size)
+          for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+              if value < 1024 or unit == "TiB":
+                  print(f"{size} B" if unit == "B" else f"{value:.2f} {unit}")
+                  break
+              value /= 1024
+          PY
+          )"
+          echo "📦 Recovery ZIP: ${RECOVERY_ZIP} (${final_size_human})"
+          echo "RECOVERY_ZIP_SIZE=${final_size_human}" >> $GITHUB_ENV
+
+      - name: ☁️ Upload to Google Drive
+        id: gdrive_upload
         env:
-          SF_USERNAME: ${{ secrets.SF_USERNAME }}
-          SF_PASSWORD: ${{ secrets.SF_PASSWORD }}
-          SF_PROJECT: ${{ secrets.SF_PROJECT }}
           GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
+          set -Eeuo pipefail
+          
           # Install rclone
           curl -s https://rclone.org/install.sh | bash 2>/dev/null || true
           export PATH="/usr/local/bin:$PATH"
-          which rclone || { echo "rclone install failed"; exit 1; }
+          which rclone || { echo "::error::rclone install failed"; exit 1; }
           rclone version
           
-          # Install sshpass
-          apt-get install -y sshpass > /dev/null 2>&1 || true
-          
-          # Setup rclone config for Google Drive service account
+          # Setup rclone config
           mkdir -p ~/.config/rclone
           printf '[gdrive]\ntype = drive\nscope = drive\nservice_account_base64 = %s\nroot_folder_id = %s\n' \
             "${GDRIVE_SA_KEY}" "${GDRIVE_FOLDER_ID}" > ~/.config/rclone/rclone.conf
           
-          upload_gdrive() {
-            local file="$1"
-            local bn=$(basename "$file")
-            local size=$(du -h "$file" | cut -f1)
-            echo "Uploading ${bn} (${size}) to Google Drive..."
-            
-            rclone copy "$file" "gdrive:ColorOS_Ruan_$(date +%Y%m%d)/" \
-              --config ~/.config/rclone/rclone.conf \
-              --progress 2>&1
-            
-            if [ $? -eq 0 ]; then
-              echo "✅ Google Drive: https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}"
-            else
-              echo "❌ Google Drive upload failed"
-            fi
-          }
-          
-          upload_sf() {
-            local file="$1"
-            local bn=$(basename "$file")
-            local size=$(du -h "$file" | cut -f1)
-            local release_dir="/home/frs/project/${SF_PROJECT}/ColorOS_Ruan_$(date +%Y%m%d)"
-            
-            echo "Uploading ${bn} (${size}) to SourceForge..."
-            printf 'mkdir %s\ncd %s\nput %s\nbye\n' \
-              "${release_dir}" "${release_dir}" "${file}" | \
-              sshpass -p "$SF_PASSWORD" sftp -o StrictHostKeyChecking=no \
-                "${SF_USERNAME}@frs.sourceforge.net"
-            
-            if [ $? -eq 0 ]; then
-              echo "✅ SourceForge: https://sourceforge.net/projects/${SF_PROJECT}/files/ColorOS_Ruan_$(date +%Y%m%d)/${bn}"
-            else
-              echo "❌ SourceForge upload failed"
-            fi
-          }
-          
-          # Upload all files
+          RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
+          UPLOAD_DIR="ColorOS_Ruan_$(date +%Y%m%d)"
           ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
-          [ -f "$ZF" ] && { upload_gdrive "$ZF"; upload_sf "$ZF"; }
-          for img in ${WORK_DIR}/output/*.img; do
-            [ -f "$img" ] || continue
-            upload_gdrive "$img"
-            upload_sf "$img"
-          done
+          
+          echo "Uploading ${RECOVERY_ZIP} to Google Drive..."
+          set +e
+          rclone copy "$ZF" "gdrive:${UPLOAD_DIR}/" \
+            --config "$RCLONE_CONF" \
+            --progress 2>&1
+          google_status=$?
+          set -e
+          
+          if [ $google_status -eq 0 ]; then
+            # Generate public shareable link (DeadZone pattern)
+            drive_url="$(rclone --config="$RCLONE_CONF" link "gdrive:${UPLOAD_DIR}/${RECOVERY_ZIP}" 2>/dev/null | tail -n1 | tr -d '\r' || true)"
+            if [ -n "$drive_url" ]; then
+              echo "✅ Google Drive: ${drive_url}"
+              echo "GDRIVE_URL=${drive_url}" >> $GITHUB_ENV
+            else
+              echo "✅ Google Drive: https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}"
+              echo "GDRIVE_URL=https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}" >> $GITHUB_ENV
+            fi
+          else
+            echo "::warning::Google Drive upload failed"
+          fi
+          echo "GDRIVE_STATUS=${google_status}" >> $GITHUB_ENV
 
-      - name: Final Summary
+      - name: ⬆️ Upload to SourceForge
+        if: always()
+        env:
+          SF_USERNAME: ${{ secrets.SF_USERNAME }}
+          SF_PASSWORD: ${{ secrets.SF_PASSWORD }}
+          SF_PROJECT: ${{ secrets.SF_PROJECT }}
         run: |
+          set -Eeuo pipefail
+          
+          # Install sshpass
+          sudo apt-get install -y sshpass > /dev/null 2>&1 || true
+          
+          UPLOAD_DIR="ColorOS_Ruan_$(date +%Y%m%d)"
+          ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
+          [ -f "$ZF" ] || { echo "::warning::ZIP not found, skipping SourceForge"; exit 0; }
+          
+          echo "Uploading ${RECOVERY_ZIP} to SourceForge..."
+          set +e
+          printf 'mkdir /home/frs/project/%s/%s\ncd /home/frs/project/%s/%s\nput %s\nbye\n' \
+            "${SF_PROJECT}" "${UPLOAD_DIR}" "${SF_PROJECT}" "${UPLOAD_DIR}" "${ZF}" | \
+            sshpass -p "$SF_PASSWORD" sftp -o StrictHostKeyChecking=no \
+              "${SF_USERNAME}@frs.sourceforge.net"
+          sf_status=$?
+          set -e
+          
+          if [ $sf_status -eq 0 ]; then
+            sf_url="https://sourceforge.net/projects/${SF_PROJECT}/files/${UPLOAD_DIR}/${RECOVERY_ZIP}"
+            echo "✅ SourceForge: ${sf_url}"
+            echo "SF_URL=${sf_url}" >> $GITHUB_ENV
+          else
+            echo "::warning::SourceForge upload failed"
+          fi
+          echo "SF_STATUS=${sf_status}" >> $GITHUB_ENV
+
+      - name: 📊 Final Summary
+        if: always()
+        run: |
+          set -Eeuo pipefail
           echo "============================================"
           echo "  FULL ROM PORTING COMPLETE!"
           echo "============================================"
           echo "  Device: ${DEVICE_NAME} (${DEVICE_CODENAME})"
           echo "  Donor: ${DONOR_BRAND} ${DONOR_MODEL}"
           echo ""
-          echo "  Recovery ZIP: check file.io links above"
+          echo "  Recovery ZIP: ${RECOVERY_ZIP}"
+          echo "  ZIP Size: ${RECOVERY_ZIP_SIZE:-unknown}"
+          echo ""
+          echo "  Download Links:"
+          if [ -n "${GDRIVE_URL:-}" ]; then
+            echo "  📁 Google Drive: ${GDRIVE_URL}"
+          fi
+          if [ -n "${SF_URL:-}" ]; then
+            echo "  📁 SourceForge: ${SF_URL}"
+          fi
           echo ""
           echo "  Flash from OrangeFox recovery"
           echo "  WARNING: FLASH AT YOUR OWN RISK!"
           echo "============================================"
+
+      - name: 🧹 Cleanup workspace
+        if: always()
+        run: |
+          sudo rm -rf ${WORK_DIR}/hyperos ${WORK_DIR}/coloros
+          echo "✅ Cleanup complete"

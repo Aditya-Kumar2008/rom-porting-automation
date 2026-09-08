@@ -53,6 +53,85 @@ jobs:
           sudo mv payload-dumper-go /usr/local/bin/
           rm pd.tar.gz
 
+      - name: Validate credentials and connections
+        env:
+          SF_USERNAME: ${{ secrets.SF_USERNAME }}
+          SF_PASSWORD: ${{ secrets.SF_PASSWORD }}
+          SF_PROJECT: ${{ secrets.SF_PROJECT }}
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          echo "=== Credential Validation ==="
+          ERRORS=0
+          
+          # Check all secrets are set
+          for var in SF_USERNAME SF_PASSWORD SF_PROJECT GDRIVE_SA_KEY GDRIVE_FOLDER_ID; do
+            if [ -z "${!var}" ]; then
+              echo "❌ Missing secret: $var"
+              ERRORS=$((ERRORS+1))
+            else
+              echo "✅ $var is set"
+            fi
+          done
+          
+          # Install and test rclone
+          curl -s https://rclone.org/install.sh | bash 2>/dev/null || true
+          export PATH="/usr/local/bin:$PATH"
+          if which rclone >/dev/null 2>&1; then
+            echo "✅ rclone installed: $(rclone version | head -1)"
+          else
+            echo "❌ rclone install failed"
+            ERRORS=$((ERRORS+1))
+          fi
+          
+          # Test Google Drive service account
+          if [ -n "$GDRIVE_SA_KEY" ]; then
+            mkdir -p ~/.config/rclone
+            printf '[gdrive]\ntype = drive\nscope = drive\nservice_account_base64 = %s\nroot_folder_id = %s\n' \
+              "${GDRIVE_SA_KEY}" "${GDRIVE_FOLDER_ID}" > ~/.config/rclone/rclone.conf
+            if rclone lsd "gdrive:" --config ~/.config/rclone/rclone.conf 2>/dev/null; then
+              echo "✅ Google Drive: connected"
+            else
+              echo "⚠️ Google Drive: connection test failed (may still work)"
+            fi
+          fi
+          
+          # Test SourceForge SSH
+          if [ -n "$SF_USERNAME" ] && [ -n "$SF_PASSWORD" ]; then
+            sudo apt-get install -y sshpass >/dev/null 2>&1 || true
+            if timeout 15 sshpass -p "$SF_PASSWORD" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+              "${SF_USERNAME}@shell.sourceforge.net" "echo ok" 2>/dev/null | grep -q ok; then
+              echo "✅ SourceForge SSH: connected"
+            else
+              echo "⚠️ SourceForge SSH: connection test failed (may still work from GitHub runners)"
+            fi
+          fi
+          
+          # Test ROM URLs
+          echo "Testing HyperOS URL..."
+          if wget -q --spider "${{ github.event.inputs.hyperos_url }}" 2>/dev/null; then
+            echo "✅ HyperOS URL: accessible"
+          else
+            echo "❌ HyperOS URL: not accessible"
+            ERRORS=$((ERRORS+1))
+          fi
+          
+          echo "Testing ColorOS URL..."
+          if wget -q --spider "${{ github.event.inputs.coloros_url }}" 2>/dev/null; then
+            echo "✅ ColorOS URL: accessible"
+          else
+            echo "❌ ColorOS URL: not accessible"
+            ERRORS=$((ERRORS+1))
+          fi
+          
+          echo ""
+          if [ $ERRORS -gt 0 ]; then
+            echo "❌ Validation failed with $ERRORS errors. Fix issues above before continuing."
+            exit 1
+          else
+            echo "✅ All validations passed! Starting build..."
+          fi
+
       - name: Create dirs
         run: mkdir -p ${WORK_DIR}/{hyperos,coloros,output}
 

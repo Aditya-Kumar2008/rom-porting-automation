@@ -369,14 +369,12 @@ jobs:
           echo "📦 Recovery ZIP: ${RECOVERY_ZIP} (${final_size_human})"
           echo "RECOVERY_ZIP_SIZE=${final_size_human}" >> $GITHUB_ENV
 
-      - name: ☁️ Upload to Google Drive
+      - name: ☁️ Upload to Google Drive (optional)
         id: gdrive_upload
         env:
           GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
-          set -Eeuo pipefail
-          
           # Install rclone (direct binary download - more reliable than install.sh)
           cd /tmp
           wget -q "https://downloads.rclone.org/current/rclone-current-linux-amd64.zip" -O rclone.zip
@@ -397,27 +395,24 @@ jobs:
           ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
           
           echo "Uploading ${RECOVERY_ZIP} to Google Drive..."
-          set +e
           rclone copy "$ZF" "gdrive:${UPLOAD_DIR}/" \
             --config "$RCLONE_CONF" \
-            --progress 2>&1
-          google_status=$?
-          set -e
+            --progress 2>&1 || {
+            echo "::warning::Google Drive upload failed (service account may lack permissions)"
+            echo "GDRIVE_STATUS=failed" >> $GITHUB_ENV
+            exit 0
+          }
           
-          if [ $google_status -eq 0 ]; then
-            # Generate public shareable link (DeadZone pattern)
-            drive_url="$(rclone --config="$RCLONE_CONF" link "gdrive:${UPLOAD_DIR}/${RECOVERY_ZIP}" 2>/dev/null | tail -n1 | tr -d '\r' || true)"
-            if [ -n "$drive_url" ]; then
-              echo "✅ Google Drive: ${drive_url}"
-              echo "GDRIVE_URL=${drive_url}" >> $GITHUB_ENV
-            else
-              echo "✅ Google Drive: https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}"
-              echo "GDRIVE_URL=https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}" >> $GITHUB_ENV
-            fi
+          # Generate public shareable link (DeadZone pattern)
+          drive_url="$(rclone --config="$RCLONE_CONF" link "gdrive:${UPLOAD_DIR}/${RECOVERY_ZIP}" 2>/dev/null | tail -n1 | tr -d '\r' || true)"
+          if [ -n "$drive_url" ]; then
+            echo "✅ Google Drive: ${drive_url}"
+            echo "GDRIVE_URL=${drive_url}" >> $GITHUB_ENV
           else
-            echo "::warning::Google Drive upload failed"
+            echo "✅ Google Drive: https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}"
+            echo "GDRIVE_URL=https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}" >> $GITHUB_ENV
           fi
-          echo "GDRIVE_STATUS=${google_status}" >> $GITHUB_ENV
+          echo "GDRIVE_STATUS=success" >> $GITHUB_ENV
 
       - name: ⬆️ Upload to SourceForge
         if: always()

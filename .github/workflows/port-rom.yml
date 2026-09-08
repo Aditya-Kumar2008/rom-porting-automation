@@ -270,19 +270,24 @@ jobs:
           GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
-          # Install rclone and sshpass
+          # Install rclone
           curl -s https://rclone.org/install.sh | bash 2>/dev/null || true
+          export PATH="/usr/local/bin:$PATH"
+          which rclone || { echo "rclone install failed"; exit 1; }
+          rclone version
+          
+          # Install sshpass
           apt-get install -y sshpass > /dev/null 2>&1 || true
           
           # Setup rclone config for Google Drive service account
           mkdir -p ~/.config/rclone
-          cat > ~/.config/rclone/rclone.conf <<EOF
-          [gdrive]
-          type = drive
-          scope = drive
-          service_account_base64 = ${GDRIVE_SA_KEY}
-          root_folder_id = ${GDRIVE_FOLDER_ID}
-          EOF
+          cat > ~/.config/rclone/rclone.conf <<RCLONE_EOF
+[gdrive]
+type = drive
+scope = drive
+service_account_base64 = ${GDRIVE_SA_KEY}
+root_folder_id = ${GDRIVE_FOLDER_ID}
+RCLONE_EOF
           
           upload_gdrive() {
             local file="$1"
@@ -309,12 +314,12 @@ jobs:
             
             echo "Uploading ${bn} (${size}) to SourceForge..."
             sshpass -p "$SF_PASSWORD" sftp -o StrictHostKeyChecking=no \
-              "${SF_USERNAME}@frs.sourceforge.net" <<EOF
-          mkdir ${release_dir}
-          cd ${release_dir}
-          put ${file}
-          bye
-          EOF
+              "${SF_USERNAME}@frs.sourceforge.net" <<SFTP_EOF
+mkdir ${release_dir}
+cd ${release_dir}
+put ${file}
+bye
+SFTP_EOF
             
             if [ $? -eq 0 ]; then
               echo "✅ SourceForge: https://sourceforge.net/projects/${SF_PROJECT}/files/ColorOS_Ruan_$(date +%Y%m%d)/${bn}"

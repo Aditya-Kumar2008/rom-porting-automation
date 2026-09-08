@@ -261,60 +261,28 @@ jobs:
           echo "=== ALL OUTPUT ==="
           ls -lh ${WORK_DIR}/output/
 
-      - name: Create GitHub Release with ROM
-        id: release
+      - name: Upload to Pixeldrain
+        id: pixeldrain_upload
         run: |
-          TAG="v$(date +%Y%m%d)-${DEVICE_CODENAME}"
-          TITLE="ColorOS ROM Port for ${DEVICE_NAME} ($(date +%Y-%m-%d))"
-          BODY="## ColorOS ROM Port for ${DEVICE_NAME} (${DEVICE_CODENAME})
-          Based on HyperOS + OnePlus 12R donor
-
-          **Flash from OrangeFox recovery**
-
-          ### Partition images included:
-          - system.img (ColorOS system with bbk porting)
-          - vendor.img (HyperOS vendor with COS&OOS port)
-          - odm.img (ODM with device properties)
-          - boot.img, vendor_boot.img, modem.img (HyperOS originals)
-
-          ### Instructions:
-          1. Boot into OrangeFox recovery
-          2. Flash the recovery ZIP, OR
-          3. For fastboot: fastboot flash <partition> <image>.img"
-
-          # Create release
-          RELEASE_ID=$(curl -s -X POST             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}"             -H "Accept: application/vnd.github.v3+json"             "https://api.github.com/repos/${{ github.repository }}/releases"             -d "{"tag_name":"${TAG}","name":"${TITLE}","body":"${BODY}","draft":false}"             | python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
-
-          echo "Release ID: ${RELEASE_ID}"
-          echo "RELEASE_ID=${RELEASE_ID}" >> $GITHUB_ENV
-
-          if [ -n "$RELEASE_ID" ]; then
-            # Upload individual images (<2GB each, supported by GitHub)
-            for img in ${WORK_DIR}/output/*.img; do
-              [ -f "$img" ] || continue
-              BN=$(basename "$img")
-              SIZE=$(du -h "$img" | cut -f1)
-              echo "Uploading ${BN} (${SIZE}) to release..."
-              UPLOAD_URL="https://uploads.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=${BN}"
-              curl -s -X POST                 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}"                 -H "Content-Type: application/octet-stream"                 --data-binary "@${img}"                 "$UPLOAD_URL" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('browser_download_url','FAILED'))" 2>/dev/null
-            done
-
-            # Split and upload system.img (too large for single upload)
-            echo "Splitting system.img into 1GB parts..."
-            split -b 1G ${WORK_DIR}/output/system.img ${WORK_DIR}/output/system.img.part
-            for part in ${WORK_DIR}/output/system.img.part*; do
-              BN=$(basename "$part")
-              echo "Uploading ${BN}..."
-              UPLOAD_URL="https://uploads.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=${BN}"
-              curl -s -X POST                 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}"                 -H "Content-Type: application/octet-stream"                 --data-binary "@${part}"                 "$UPLOAD_URL" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('browser_download_url','FAILED'))" 2>/dev/null
-            done
-
-            echo ""
-            echo "Release URL: https://github.com/${{ github.repository }}/releases/tag/${TAG}"
-            echo "download_url=https://github.com/${{ github.repository }}/releases/tag/${TAG}" >> $GITHUB_OUTPUT
-          else
-            echo "FAILED to create release"
-          fi
+          upload_pixeldrain() {
+            local file="$1"
+            local bn=$(basename "$file")
+            local size=$(du -h "$file" | cut -f1)
+            echo "Uploading ${bn} (${size})..."
+            RESP=$(curl -s -T "$file" "https://pixeldrain.com/api/file/" 2>&1)
+            FILE_ID=$(echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('id',''))" 2>/dev/null)
+            if [ -n "$FILE_ID" ] && [ "$FILE_ID" != "None" ]; then
+              echo "${bn}: https://pixeldrain.com/u/${FILE_ID}"
+            else
+              echo "${bn}: FAILED (${RESP})"
+            fi
+          }
+          ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
+          [ -f "$ZF" ] && upload_pixeldrain "$ZF"
+          for img in ${WORK_DIR}/output/*.img; do
+            [ -f "$img" ] || continue
+            upload_pixeldrain "$img"
+          done
 
       - name: Final Summary
         run: |

@@ -261,26 +261,42 @@ jobs:
           echo "=== ALL OUTPUT ==="
           ls -lh ${WORK_DIR}/output/
 
-      - name: Upload to transfer.sh
+      - name: Upload to SourceForge
         id: upload_step
+        env:
+          SF_USERNAME: ${{ secrets.SF_USERNAME }}
+          SF_PASSWORD: ${{ secrets.SF_PASSWORD }}
+          SF_PROJECT: ${{ secrets.SF_PROJECT }}
         run: |
-          upload_transfer() {
+          apt-get install -y lftp sshpass > /dev/null 2>&1 || true
+          
+          upload_sf() {
             local file="$1"
             local bn=$(basename "$file")
             local size=$(du -h "$file" | cut -f1)
-            echo "Uploading ${bn} (${size})..."
-            URL=$(curl -s --upload-file "$file" "https://transfer.sh/${bn}" 2>&1)
-            if echo "$URL" | grep -q "http"; then
-              echo "${bn}: ${URL}"
+            local release_dir="/home/frs/project/${SF_PROJECT}/ColorOS_Ruan_$(date +%Y%m%d)"
+            
+            echo "Uploading ${bn} (${size}) to SourceForge..."
+            sshpass -p "$SF_PASSWORD" sftp -o StrictHostKeyChecking=no \
+              "${SF_USERNAME}@frs.sourceforge.net" <<EOF
+          mkdir ${release_dir}
+          cd ${release_dir}
+          put ${file}
+          bye
+          EOF
+            
+            if [ $? -eq 0 ]; then
+              echo "https://sourceforge.net/projects/${SF_PROJECT}/files/ColorOS_Ruan_$(date +%Y%m%d)/${bn}"
             else
-              echo "${bn}: FAILED (${URL})"
+              echo "FAILED: ${bn}"
             fi
           }
+          
           ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
-          [ -f "$ZF" ] && upload_transfer "$ZF"
+          [ -f "$ZF" ] && upload_sf "$ZF"
           for img in ${WORK_DIR}/output/*.img; do
             [ -f "$img" ] || continue
-            upload_transfer "$img"
+            upload_sf "$img"
           done
 
       - name: Final Summary

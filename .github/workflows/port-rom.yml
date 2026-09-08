@@ -10,7 +10,7 @@ on:
       coloros_url:
         description: 'ColorOS/OOS Donor ROM OTA URL (fresh link, expires ~30min)'
         required: true
-        default: 'https://gauss-compota-c-fr.allawnofs.com/remove-e3fe1ae8ce09716b9b69a4d5de2a3f93/g-10eab6008d5642cf42abd2aa41f847cb/component-ota/26/07/20/3924d761f9cd42b19b55cb0bf8400819.zip?sign=aaff1e9b9eb51fbf3bbccaa50e4bb646&t=6a9ec4a9&x-oss-signature=EPR3nFc0il0d%2BPGVNkyD9B5VdEbqJlh9i%2BclWmAPpZE%3D&x-oss-signature-version=OSS2&x-oss-expires=1788791729&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx'
+        default: 'https://gauss-compota-c-fr.allawnofs.com/remove-e3fe1ae8ce09716b9b69a4d5de2a3f93/g-10eab6008d5642cf42abd2aa41f847cb/component-ota/26/07/20/3924d761f9cd42b19b55cb0bf8400819.zip?sign=416ab701de858a7bca7d93c66d8d6f7b&t=6a9f9b30&x-oss-signature=tpPBP2yculAb3uV7QpvaUkEOtE8rn%2BSRtnw1sz%2BKfLk%3D&x-oss-signature-version=OSS2&x-oss-expires=1788846648&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx'
 
 env:
   WORK_DIR: /tmp/rom-porting
@@ -53,9 +53,6 @@ jobs:
       - name: Create dirs
         run: mkdir -p ${WORK_DIR}/{hyperos,coloros,output}
 
-      # ============================================================
-      # PHASE 1: Download & extract HyperOS
-      # ============================================================
       - name: Download HyperOS ROM
         run: aria2c -x16 -s16 -j5 --file-allocation=none -d ${WORK_DIR}/hyperos -o hyperos-rom.zip "${{ github.event.inputs.hyperos_url }}"
 
@@ -80,9 +77,6 @@ jobs:
             fi
           done
 
-      # ============================================================
-      # PHASE 2: Download & extract ColorOS
-      # ============================================================
       - name: Download ColorOS ROM
         run: aria2c -x16 -s16 -j5 --file-allocation=none -d ${WORK_DIR}/coloros -o coloros-rom.zip "${{ github.event.inputs.coloros_url }}"
 
@@ -110,9 +104,6 @@ jobs:
           ls -d extracted/*/ 2>/dev/null
           df -h / | tail -1
 
-      # ============================================================
-      # PHASE 3: COS&OOS Vendor Port
-      # ============================================================
       - name: "COS&OOS: Vendor port"
         run: |
           HV="${WORK_DIR}/hyperos/extracted/vendor"
@@ -134,9 +125,6 @@ jobs:
             "${CPU_MODEL}" "${CPU_MODEL}" "${DONOR_BRAND}" "${DONOR_BRAND}" "${DEVICE_CODENAME}" "${DEVICE_NAME}" "${FRONT_CAM}" "${BACK_CAM}" "${SCREEN_SIZE}" >> "${ODM}"
           grep -E "device_family|cpuinfo|brand|model|market|camera|display|oplusrom" "${ODM}"
 
-      # ============================================================
-      # PHASE 4: bbk_rom_porting Guide Steps 7-15
-      # ============================================================
       - name: "bbk Step 7: Clean system my_*"
         run: |
           S="${WORK_DIR}/coloros/extracted/system"
@@ -219,9 +207,6 @@ jobs:
           [ -d "${WORK_DIR}/coloros/extracted/product" ] && cp -rn "${WORK_DIR}/coloros/extracted/product/"* "${S}/" 2>/dev/null && echo "product merged"
           echo "Final system: $(du -sh ${S})"
 
-      # ============================================================
-      # PHASE 5: Repack ALL partitions
-      # ============================================================
       - name: Repack system.img
         run: |
           mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/system.img "${WORK_DIR}/coloros/extracted/system"
@@ -246,201 +231,21 @@ jobs:
           echo "=== ALL OUTPUT ==="
           ls -lh ${WORK_DIR}/output/
 
-      # ============================================================
-      # PHASE 6: Build full ROM flashable ZIP
-      # ============================================================
       - name: Build recovery flashable ZIP for OrangeFox
         run: |
           FD="${WORK_DIR}/recovery-flashable"
           mkdir -p ${FD}/META-INF/com/google/android
 
-          # Create update-binary shell script for OrangeFox
-          # Handles: static partitions (boot, modem, vendor_boot) via dd
-          # Dynamic partitions (system, vendor, odm) - extracts to /tmp, user flashes via fastboot or recovery dd
-          cat > "${FD}/META-INF/com/google/android/update-binary" << 'UPDATESCRIPT'
-#!/sbin/sh
-set -e
+          # Write update-binary as printf (no heredoc)
+          printf '#!/sbin/sh\nset -e\nOUTFD=$(ps | grep -v "grep" | grep -oE "update_binary(.*)" | cut -d" " -f3)\nui_print() { echo "ui_print $1" > /proc/self/fd/$OUTFD; echo "ui_print" > /proc/self/fd/$OUTFD; }\nset_progress() { echo "set_progress $1" > /proc/self/fd/$OUTFD; }\nSLOT=$(getprop ro.boot.slot_suffix 2>/dev/null || echo "")\nui_print "============================================"\nui_print "  ColorOS ROM Port for Poco Pad 5G (ruan)"\nui_print "  Based on HyperOS + OnePlus 12R"\nui_print "  Active slot: ${SLOT:-none}"\nui_print "============================================"\nui_print ""\nfor BD in /dev/block/bootdevice/by-name /dev/block/by-name /dev/block/platform/*/by-name; do\n  [ -d "$BD" ] && BLOCK_PATH="$BD" && break\ndone\nui_print "Block path: ${BLOCK_PATH}"\nset_progress 0.1\nui_print "--- Flashing static partitions ---"\nfor P in boot vendor_boot modem dtbo; do\n  IMG="/tmp/${P}.img"\n  DEV="${BLOCK_PATH}/${P}${SLOT}"\n  [ ! -b "$DEV" ] && DEV="${BLOCK_PATH}/${P}"\n  if [ -f "$IMG" ] && [ -b "$DEV" ]; then\n    ui_print "Flashing ${P}..."\n    dd if="$IMG" of="$DEV" bs=4096 2>/dev/null\n    sync\n    ui_print "  Done"\n  fi\ndone\nset_progress 0.5\nui_print "--- Flashing dynamic partitions ---"\nui_print "system/vendor/odm are in super partition"\nfor P in system vendor odm; do\n  IMG="/tmp/${P}.img"\n  DEV="/dev/block/mapper/${P}${SLOT}"\n  [ ! -b "$DEV" ] && DEV="${BLOCK_PATH}/${P}${SLOT}"\n  [ ! -b "$DEV" ] && DEV="${BLOCK_PATH}/${P}"\n  if [ -f "$IMG" ] && [ -b "$DEV" ]; then\n    ui_print "Flashing ${P}..."\n    dd if="$IMG" of="$DEV" bs=4096 2>/dev/null\n    sync\n    ui_print "  Done"\n  elif [ -f "$IMG" ]; then\n    ui_print "WARNING: Cannot find ${P} device"\n  fi\ndone\nset_progress 1.0\nui_print ""\nui_print "============================================"\nui_print "  ROM flash complete! Reboot now"\nui_print "============================================"\nexit 0\n' > "${FD}/META-INF/com/google/android/update-binary"
 
-# UI helpers for TWRP/OrangeFox
-OUTFD=$(ps | grep -v "grep" | grep -oE "update_binary(.*)" | cut -d" " -f3)
-ui_print() { echo "ui_print $1" > /proc/self/fd/$OUTFD; echo "ui_print" > /proc/self/fd/$OUTFD; }
-set_progress() { echo "set_progress $1" > /proc/self/fd/$OUTFD; }
+          # Write updater-script as printf
+          printf 'show_progress(0.1, 2.0);\nassert(getprop("ro.product.device") == "ruan" || getprop("ro.build.product") == "ruan" || getprop("ro.product.device") == "dizi" || getprop("ro.build.product") == "dizi", "This ROM is for Poco Pad 5G only!");\nui_print("Extracting images...");\npackage_extract_file("system.img", "/tmp/system.img");\npackage_extract_file("vendor.img", "/tmp/vendor.img");\npackage_extract_file("odm.img", "/tmp/odm.img");\npackage_extract_file("boot.img", "/tmp/boot.img");\npackage_extract_file("vendor_boot.img", "/tmp/vendor_boot.img");\npackage_extract_file("modem.img", "/tmp/modem.img");\npackage_extract_file("META-INF/com/google/android/update-binary", "/tmp/update-binary");\nrun_program("/sbin/chmod", "755", "/tmp/update-binary");\nshow_progress(0.3, 1.0);\nui_print("Flashing...");\nrun_program("/sbin/sh", "/tmp/update-binary");\nshow_progress(1.0, 0);\n' > "${FD}/META-INF/com/google/android/updater-script"
 
-# Detect active slot
-SLOT=$(getprop ro.boot.slot_suffix 2>/dev/null || echo "")
-ui_print "============================================"
-ui_print "  ColorOS ROM Port for Poco Pad 5G (ruan)"
-ui_print "  Based on HyperOS + OnePlus 12R"
-ui_print "  Active slot: ${SLOT:-none}"
-ui_print "============================================"
-ui_print ""
-
-# Find block device path
-for BD in /dev/block/bootdevice/by-name /dev/block/by-name /dev/block/platform/*/by-name; do
-  [ -d "$BD" ] && BLOCK_PATH="$BD" && break
-done
-ui_print "Block path: ${BLOCK_PATH}"
-
-set_progress 0.1
-
-# ============================================
-# STEP 1: Flash static partitions (dd works)
-# ============================================
-ui_print "--- Flashing static partitions ---"
-
-flash_static() {
-  local name="$1"
-  local img="/tmp/${name}.img"
-  local dev="${BLOCK_PATH}/${name}${SLOT}"
-  [ ! -b "$dev" ] && dev="${BLOCK_PATH}/${name}"
-  if [ -f "$img" ] && [ -b "$dev" ]; then
-    ui_print "Flashing ${name}..."
-    dd if="$img" of="$dev" bs=4096 2>/dev/null
-    sync
-    ui_print "  Done"
-  fi
-}
-
-# Flash boot, vendor_boot, modem, dtbo (static partitions)
-for P in boot vendor_boot modem dtbo; do
-  flash_static "$P"
-done
-
-set_progress 0.5
-
-# ============================================
-# STEP 2: Handle dynamic partitions
-# ============================================
-ui_print ""
-ui_print "--- Handling dynamic partitions ---"
-ui_print "system/vendor/odm are in super partition"
-ui_print ""
-
-# Check if lpmake/lpunpack are available
-if command -v lpunpack >/dev/null 2>&1; then
-  ui_print "Found lpunpack - will repack super"
-  SUPER_DEV="${BLOCK_PATH}/super"
-  [ -b "$SUPER_DEV" ] || SUPER_DEV="${BLOCK_PATH}/userdata"
-
-  # Extract super partition
-  ui_print "Extracting super partition..."
-  lpunpack "$SUPER_DEV" /tmp/super_extract/ 2>/dev/null
-
-  # Replace partitions
-  for P in system vendor odm; do
-    IMG="/tmp/${P}.img"
-    if [ -f "$IMG" ]; then
-      ui_print "Replacing ${P}..."
-      cp "$IMG" "/tmp/super_extract/${P}${SLOT}.img" 2>/dev/null || cp "$IMG" "/tmp/super_extract/${P}.img"
-    fi
-  done
-
-  # Repack super
-  ui_print "Repacking super..."
-  # Get super size
-  SUPER_SIZE=$(blockdev --getsize64 "$SUPER_DEV" 2>/dev/null || echo "0")
-  # Use lpmake to create new super
-  LPARGS=""
-  for P in system vendor odm product system_ext; do
-    IMG="/tmp/super_extract/${P}${SLOT}.img"
-    [ ! -f "$IMG" ] && IMG="/tmp/super_extract/${P}.img"
-    if [ -f "$IMG" ]; then
-      SIZE=$(stat -c%s "$IMG")
-      LPARGS="$LPARGS --partition ${P}${SLOT}:readonly:${SIZE}:main --image ${P}${SLOT}=${IMG}"
-    fi
-  done
-  lpmake --device-size="${SUPER_SIZE}" --metadata-slots=2     --partition system${SLOT}:readonly:0:main     --partition vendor${SLOT}:readonly:0:main     --partition odm${SLOT}:readonly:0:main     --partition product${SLOT}:readonly:0:main     --partition system_ext${SLOT}:readonly:0:main     --image system${SLOT}=/tmp/system.img     --image vendor${SLOT}=/tmp/vendor.img     --image odm${SLOT}=/tmp/odm.img     --output /tmp/super_new.img 2>/dev/null
-
-  if [ -f /tmp/super_new.img ]; then
-    ui_print "Flashing new super..."
-    dd if=/tmp/super_new.img of="$SUPER_DEV" bs=4096
-    sync
-    ui_print "Super flashed!"
-  fi
-else
-  ui_print "lpunpack not found"
-  ui_print "Flashing dynamic partitions via dd to mapper..."
-  for P in system vendor odm; do
-    IMG="/tmp/${P}.img"
-    # Try mapper path first, then by-name
-    DEV="/dev/block/mapper/${P}${SLOT}"
-    [ ! -b "$DEV" ] && DEV="${BLOCK_PATH}/${P}${SLOT}"
-    [ ! -b "$DEV" ] && DEV="${BLOCK_PATH}/${P}"
-    if [ -f "$IMG" ] && [ -b "$DEV" ]; then
-      ui_print "Flashing ${P} to ${DEV}..."
-      # Resize partition to fit image
-      SIZE=$(stat -c%s "$IMG")
-      ui_print "  Image size: $((SIZE/1048576))MB"
-      dd if="$IMG" of="$DEV" bs=4096 2>/dev/null
-      sync
-      ui_print "  Done"
-    elif [ -f "$IMG" ]; then
-      ui_print "WARNING: Cannot find device for ${P}"
-      ui_print "  Try: fastboot flash ${P} /tmp/${P}.img"
-    fi
-  done
-fi
-
-set_progress 0.9
-
-# ============================================
-# STEP 3: Cleanup
-# ============================================
-ui_print ""
-ui_print "Cleaning up..."
-rm -f /tmp/system.img /tmp/vendor.img /tmp/odm.img /tmp/boot.img /tmp/modem.img /tmp/vendor_boot.img
-rm -rf /tmp/super_extract /tmp/super_new.img
-
-set_progress 1.0
-ui_print ""
-ui_print "============================================"
-ui_print "  ROM flash complete!"
-ui_print "  Reboot to system"
-ui_print "============================================"
-exit 0
-UPDATESCRIPT
-
-          # Create updater-script (edify) - extracts images then runs update-binary
-          cat > "${FD}/META-INF/com/google/android/updater-script" << 'EDIFY'
-# ColorOS ROM Port for Poco Pad 5G
-# Extract partition images and flash them
-
-show_progress(0.1, 2.0);
-
-# Check device
-assert(getprop("ro.product.device") == "ruan" || getprop("ro.build.product") == "ruan" ||
-       getprop("ro.product.device") == "dizi" || getprop("ro.build.product") == "dizi" ||
-       getprop("ro.product.device") == "24074RPD2C" || getprop("ro.build.product") == "24074RPD2C",
-       "This ROM is for Poco Pad 5G (ruan/dizi) only!");
-
-ui_print("Extracting partition images...");
-
-# Extract all images to /tmp
-package_extract_file("system.img", "/tmp/system.img");
-package_extract_file("vendor.img", "/tmp/vendor.img");
-package_extract_file("odm.img", "/tmp/odm.img");
-package_extract_file("boot.img", "/tmp/boot.img");
-package_extract_file("vendor_boot.img", "/tmp/vendor_boot.img");
-package_extract_file("modem.img", "/tmp/modem.img");
-
-show_progress(0.3, 1.0);
-ui_print("Images extracted. Starting flash...");
-
-# Extract update-binary and run it
-package_extract_file("META-INF/com/google/android/update-binary", "/tmp/update-binary");
-run_program("/sbin/chmod", "755", "/tmp/update-binary");
-run_program("/sbin/sh", "/tmp/update-binary");
-
-show_progress(1.0, 0);
-EDIFY
-
-          # Copy images to flashable dir
-          cp ${WORK_DIR}/output/system.img ${FD}/
-          cp ${WORK_DIR}/output/vendor.img ${FD}/
-          cp ${WORK_DIR}/output/odm.img ${FD}/ 2>/dev/null || true
-          cp ${WORK_DIR}/output/boot.img ${FD}/ 2>/dev/null || true
-          cp ${WORK_DIR}/output/vendor_boot.img ${FD}/ 2>/dev/null || true
-          cp ${WORK_DIR}/output/modem.img ${FD}/ 2>/dev/null || true
+          # Copy ALL images
+          for img in ${WORK_DIR}/output/*.img; do
+            [ -f "$img" ] && cp -v "$img" ${FD}/
+          done
 
           cd ${FD}
           RECOVERY_ZIP="ColorOS_Recovery_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
@@ -453,37 +258,6 @@ EDIFY
           echo "=== ALL OUTPUT ==="
           ls -lh ${WORK_DIR}/output/
 
-      - name: Build fastboot flashable package
-        run: |
-          FD="${WORK_DIR}/fastboot-flashable"
-          mkdir -p ${FD}/images
-
-          # Copy all images
-          for img in ${WORK_DIR}/output/*.img; do
-            [ -f "$img" ] && cp -v "$img" ${FD}/images/
-          done
-
-          # Create flash script
-          printf '#!/bin/bash\n# Fastboot flash script for Poco Pad 5G (ruan)\n# ColorOS ROM Port based on HyperOS + OnePlus 12R\n\nset -e\necho "============================================"\necho "  ColorOS ROM Fastboot Flasher"\necho "  Device: Poco Pad 5G (ruan)"\necho "============================================"\necho ""\necho "Make sure device is in fastboot mode:"\necho "  adb reboot bootloader"\necho ""\nread -p "Press Enter to continue..."\n\nIMAGES_DIR="$(dirname "$0")/images"\n\n# Flash partitions\nfor PART in system vendor odm boot vendor_boot; do\n  IMG="${IMAGES_DIR}/${PART}.img"\n  if [ -f "$IMG" ]; then\n    echo "Flashing ${PART}..."\n    fastboot flash ${PART} "$IMG"\n  fi\ndone\n\n# Flash modem if present\nif [ -f "${IMAGES_DIR}/modem.img" ]; then\n  echo "Flashing modem..."\n  fastboot flash modem "${IMAGES_DIR}/modem.img"\nfi\n\necho ""\necho "============================================"\necho "  Flash complete! Rebooting..."\necho "============================================"\nfastboot reboot\n' > "${FD}/flash_all.sh"
-          chmod +x "${FD}/flash_all.sh"
-
-          # Create Windows batch file
-          printf '@echo off\necho ============================================\necho   ColorOS ROM Fastboot Flasher\necho   Device: Poco Pad 5G (ruan)\necho ============================================\necho.\necho Make sure device is in fastboot mode:\necho   adb reboot bootloader\necho.\npause\n\nfor %%%%f in (images\\*.img) do (\n  echo Flashing %%%%~nf...\n  fastboot flash %%%%~nf "images\\%%%%f"\n)\n\necho.\necho ============================================\necho   Flash complete! Rebooting...\necho ============================================\nfastboot reboot\npause\n' > "${FD}/flash_all.bat"
-
-          cd ${FD}
-          FASTBOOT_ZIP="ColorOS_Fastboot_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
-          zip -r9 ${WORK_DIR}/output/${FASTBOOT_ZIP} .
-          echo "FASTBOOT_ZIP=${FASTBOOT_ZIP}" >> $GITHUB_ENV
-          echo "Fastboot ZIP built: ${FASTBOOT_ZIP}"
-          ls -lh ${WORK_DIR}/output/${FASTBOOT_ZIP}
-
-          echo ""
-          echo "=== ALL OUTPUT ==="
-          ls -lh ${WORK_DIR}/output/
-
-      # ============================================================
-      # PHASE 7: Upload to Gofile
-      # ============================================================
       - name: Upload to file.io
         id: fileio_upload
         run: |
@@ -493,17 +267,13 @@ EDIFY
             local size=$(du -h "$file" | cut -f1)
             echo "Uploading ${bn} (${size})..."
             RESP=$(curl -s -F "file=@${file}" "https://file.io" 2>&1)
-            URL=$(echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('link','FAILED'))" 2>/dev/null || echo "FAILED")
+            URL=$(echo "${RESP}" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('link','FAILED'))" 2>/dev/null || echo "FAILED")
             echo "${bn}: ${URL}"
             KEY=$(echo "${bn}" | sed 's/\.img$//' | tr '.' '_')
             echo "${KEY}_url=${URL}" >> $GITHUB_OUTPUT
           }
-
-          # Upload full ROM ZIP (7GB)
-          ZF="${WORK_DIR}/output/${FLASHABLE_ZIP}"
+          ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
           [ -f "$ZF" ] && upload_fileio "$ZF"
-
-          # Upload individual images
           for img in ${WORK_DIR}/output/*.img; do
             [ -f "$img" ] || continue
             upload_fileio "$img"
@@ -517,9 +287,8 @@ EDIFY
           echo "  Device: ${DEVICE_NAME} (${DEVICE_CODENAME})"
           echo "  Donor: ${DONOR_BRAND} ${DONOR_MODEL}"
           echo ""
-          echo "  Full ROM ZIP: check Catbox links above"
+          echo "  Recovery ZIP: check file.io links above"
           echo ""
-          echo "  Individual images uploaded to Gofile"
-          echo ""
+          echo "  Flash from OrangeFox recovery"
           echo "  WARNING: FLASH AT YOUR OWN RISK!"
           echo "============================================"

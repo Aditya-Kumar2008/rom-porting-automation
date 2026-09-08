@@ -377,10 +377,14 @@ jobs:
         run: |
           set -Eeuo pipefail
           
-          # Install rclone
-          curl -s https://rclone.org/install.sh | bash 2>/dev/null || true
+          # Install rclone (direct binary download - more reliable than install.sh)
+          cd /tmp
+          wget -q "https://downloads.rclone.org/current/rclone-current-linux-amd64.zip" -O rclone.zip
+          unzip -q rclone.zip
+          sudo cp rclone-*/rclone /usr/local/bin/
+          sudo chmod 755 /usr/local/bin/rclone
+          rm -rf rclone-*.zip rclone-*/
           export PATH="/usr/local/bin:$PATH"
-          which rclone || { echo "::error::rclone install failed"; exit 1; }
           rclone version
           
           # Setup rclone config

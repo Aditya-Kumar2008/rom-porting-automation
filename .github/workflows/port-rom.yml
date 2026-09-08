@@ -350,3 +350,4 @@ SFTP_EOF
           echo "  Flash from OrangeFox recovery"
           echo "  WARNING: FLASH AT YOUR OWN RISK!"
           echo "============================================"
+# force re-parse

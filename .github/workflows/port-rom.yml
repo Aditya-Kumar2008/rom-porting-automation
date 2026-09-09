@@ -47,7 +47,7 @@ jobs:
 
       - name: Install tools
         run: |
-          sudo apt-get update -qq
+          sudo apt-get update -qq || true
           sudo apt-get install -y -qq erofs-utils wget unzip zip jq curl aria2 python3-pip android-sdk-libsparse-utils
           cd /tmp
           wget -q "https://raw.githubusercontent.com/Rprop/aosp15_partition_tools/main/linux_glibc_x86_64/lpmake" -O lpmake || true

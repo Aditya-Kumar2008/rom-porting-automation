@@ -8,9 +8,9 @@ on:
         required: true
         default: 'https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS3.0.305.0.WFSINXM/ruan_in_global-ota_full-OS3.0.305.0.WFSINXM-user-16.0-1ede5cec45.zip'
       coloros_url:
-        description: 'ColorOS/OOS Donor ROM OTA URL (fresh link, expires ~30min)'
+        description: 'ColorOS/OOS Donor ROM OTA URL (auto-resolves if downloadCheck URL)'
         required: true
-        default: 'https://gauss-compota-c-fr.allawnofs.com/remove-e3fe1ae8ce09716b9b69a4d5de2a3f93/g-10eab6008d5642cf42abd2aa41f847cb/component-ota/26/07/20/3924d761f9cd42b19b55cb0bf8400819.zip?sign=416ab701de858a7bca7d93c66d8d6f7b&t=6a9f9b30&x-oss-signature=tpPBP2yculAb3uV7QpvaUkEOtE8rn%2BSRtnw1sz%2BKfLk%3D&x-oss-signature-version=OSS2&x-oss-expires=1788846648&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx'
+        default: 'https://component-ota-eu.allawnos.com/downloadCheck?c=e3fe1ae8ce09716b9b69a4d5de2a3f93&p=c25c9713dab2a25c829e30fe386cbe4301a2df46a5de73707d36d2ac04916f87146caff83788d73262a4181c2077&d=851ad54c99bfa241d5d076b47975b91b5ae3d60ba797246f7975c5af5dc86d924a61afb32ddb8867&g=10eab6008d5642cf42abd2aa41f847cb&id=6a5e08859e207b01827c83c3&taste=1&supportDLTaste=0&mode=1&tr=manual&s=71a3703f61ae483f6284edf5bcfbba04'
 
 env:
   WORK_DIR: /tmp/rom-porting
@@ -46,12 +46,15 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq erofs-utils wget unzip zip jq curl aria2
+          sudo apt-get install -y -qq erofs-utils wget unzip zip jq curl aria2 python3-pip
           cd /tmp
           wget -q "https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz" -O pd.tar.gz
           tar xzf pd.tar.gz
           sudo mv payload-dumper-go /usr/local/bin/
           rm pd.tar.gz
+          # Install playwright for URL resolution
+          pip install playwright
+          playwright install chromium
 
       - name: 🔐 Validate ROM URLs
         shell: python
@@ -75,7 +78,7 @@ jobs:
               else:
                   print(f"✅ {name}: valid HTTPS URL")
           
-          # Check for expired URLs (OSS signed URLs)
+          # Check for expired URLs (OSS signed URLs) - warn only, don't fail
           coloros_url = os.environ["COLOROS_URL"].strip()
           expires_match = re.search(r'x-oss-expires=(\d+)', coloros_url)
           if expires_match:
@@ -83,19 +86,15 @@ jobs:
               expires_at = int(expires_match.group(1))
               now = int(time.time())
               if now > expires_at:
-                  print(f"::error::ColorOS URL has EXPIRED (expired {now - expires_at} seconds ago)")
-                  errors += 1
+                  print(f"⚠️ ColorOS URL has EXPIRED ({(now - expires_at) // 60} min ago) - will auto-resolve")
               else:
                   remaining = (expires_at - now) // 60
-                  print(f"⚠️ ColorOS URL expires in {remaining} minutes")
+                  print(f"✅ ColorOS URL valid, expires in {remaining} minutes")
           
-          # Check if URL is a downloadCheck URL that needs resolution
+          # Check if URL is a downloadCheck URL
           if 'downloadCheck' in coloros_url:
-              print("⚠️ URL is a downloadCheck URL - will attempt resolution during download")
-              print("   If download fails, get a fresh resolved URL from https://roms.danielspringer.at/index.php?view=ota")
+              print("✅ URL is a downloadCheck URL - will auto-resolve before download")
           
-          if errors > 0:
-              sys.exit(1)
           print("✅ All URLs validated")
 
       - name: 🔐 Validate publishing secrets
@@ -176,35 +175,92 @@ jobs:
           set -Eeuo pipefail
           COLOROS_URL="${{ github.event.inputs.coloros_url }}"
           
-          # If URL is a downloadCheck URL, try to resolve it first
+          # If URL is a downloadCheck URL or expired, resolve it using Playwright
+          NEED_RESOLVE=false
           if echo "$COLOROS_URL" | grep -q "downloadCheck"; then
-            echo "⚠️ URL is downloadCheck - attempting resolution via OTA resolver..."
+            NEED_RESOLVE=true
+            echo "⚠️ URL is downloadCheck - will resolve via Playwright"
+          else
+            # Check if URL is expired
+            EXPIRES=$(echo "$COLOROS_URL" | grep -oP 'x-oss-expires=\K\d+' || echo "")
+            if [ -n "$EXPIRES" ]; then
+              NOW=$(date +%s)
+              if [ "$NOW" -gt "$EXPIRES" ]; then
+                NEED_RESOLVE=true
+                echo "⚠️ URL has EXPIRED - will resolve via Playwright"
+              fi
+            fi
+          fi
+          
+          if [ "$NEED_RESOLVE" = "true" ]; then
+            echo "Resolving ColorOS URL via roms.danielspringer.at..."
+            python3 << 'RESOLVE_EOF'
+          import asyncio
+          from playwright.async_api import async_playwright
+          
+          async def resolve_url():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch(headless=True)
+                  page = await browser.new_page()
+                  
+                  # Visit the OTA resolver page
+                  await page.goto("https://roms.danielspringer.at/index.php?view=ota")
+                  await page.wait_for_load_state("networkidle")
+                  
+                  # Select device
+                  device_select = page.locator("#otaDeviceSelect")
+                  await device_select.select_option(label="OnePlus 12R")
+                  await page.wait_for_timeout(1000)
+                  
+                  # Select region
+                  region_select = page.locator("#otaRegionSelect")
+                  await region_select.select_option(label="India (IN)")
+                  await page.wait_for_timeout(500)
+                  
+                  # Select version (latest)
+                  version_select = page.locator("#otaVersionSelect")
+                  await version_select.select_option(index=0)
+                  await page.wait_for_timeout(500)
+                  
+                  # Click resolve button
+                  resolve_btn = page.locator("#otaResolveBtn")
+                  await resolve_btn.click()
+                  
+                  # Wait for result to appear
+                  result_box = page.locator("#resultBox")
+                  await result_box.wait_for_attribute("data-link-ready", "1", timeout=30000)
+                  
+                  # Get the resolved URL
+                  url = await result_box.get_attribute("data-url")
+                  
+                  await browser.close()
+                  return url
+          
+          async def main():
+              try:
+                  url = await resolve_url()
+                  if url:
+                      print(f"RESOLVED_URL={url}")
+                      # Write to file for bash to read
+                      with open("/tmp/resolved_coloros_url.txt", "w") as f:
+                          f.write(url)
+                      print("✅ URL resolved successfully")
+                  else:
+                      print("ERROR: Failed to resolve URL")
+                      exit(1)
+              except Exception as e:
+                  print(f"ERROR: {e}")
+                  exit(1)
+          
+          asyncio.run(main())
+          RESOLVE_EOF
             
-            # Try to resolve using the website's resolver API
-            # First get a session by visiting the page
-            curl -s -c /tmp/ota_cookies.txt "https://roms.danielspringer.at/index.php?view=ota" > /dev/null 2>&1 || true
-            
-            # Extract the OTA ID from the URL parameters
-            OTA_ID=$(echo "$COLOROS_URL" | grep -oP 'id=[^&]+' | head -1 | cut -d= -f2)
-            echo "OTA ID: $OTA_ID"
-            
-            # Try to get a fresh source_url from the API (this gives downloadCheck, but may have different signature)
-            RESOLVED_URL=$(curl -s "https://roms.danielspringer.at/api/ota.php?id=${OTA_ID}&format=json" | python3 -c "
-          import sys,json
-          d=json.load(sys.stdin)
-          if d.get('release') and d['release'].get('source_url'):
-              url = d['release']['source_url']
-              if 'downloadCheck' not in url:
-                  print(url)
-          " 2>/dev/null || echo "")
-            
-            if [ -n "$RESOLVED_URL" ] && [ "$RESOLVED_URL" != "None" ]; then
-              echo "✅ Resolved URL from API"
-              COLOROS_URL="$RESOLVED_URL"
+            if [ -f /tmp/resolved_coloros_url.txt ]; then
+              COLOROS_URL=$(cat /tmp/resolved_coloros_url.txt)
+              echo "✅ Using resolved URL"
             else
-              echo "⚠️ API returned downloadCheck URL - using browser-resolved URL from defaults"
-              # Use the default URL which should be a pre-resolved URL
-              COLOROS_URL="https://gauss-compota-c-fr.allawnofs.com/remove-e3fe1ae8ce09716b9b69a4d5de2a3f93/g-10eab6008d5642cf42abd2aa41f847cb/component-ota/26/07/20/3924d761f9cd42b19b55cb0bf8400819.zip?sign=416ab701de858a7bca7d93c66d8d6f7b&t=6a9f9b30&x-oss-signature=tpPBP2yculAb3uV7QpvaUkEOtE8rn%2BSRtnw1sz%2BKfLk%3D&x-oss-signature-version=OSS2&x-oss-expires=1788846648&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx"
+              echo "::error::Failed to resolve ColorOS URL"
+              exit 1
             fi
           fi
           

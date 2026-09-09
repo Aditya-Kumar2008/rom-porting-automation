@@ -503,13 +503,15 @@ jobs:
           fi
           
           # Create rclone config
-          cat > ~/.config/rclone/rclone.conf <<EOF
-[gdrive]
-type = drive
-scope = drive
-service_account_file = /tmp/sa_key.json
-root_folder_id = ${GDRIVE_FOLDER_ID}
-EOF
+          cat > ~/.config/rclone/rclone.conf << 'RCLONE_EOF'
+          [gdrive]
+          type = drive
+          scope = drive
+          service_account_file = /tmp/sa_key.json
+          RCLONE_EOF
+          
+          # Add root_folder_id with variable expansion
+          echo "root_folder_id = ${GDRIVE_FOLDER_ID}" >> ~/.config/rclone/rclone.conf
           
           RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
           UPLOAD_DIR="ColorOS_Ruan_$(date +%Y%m%d)"

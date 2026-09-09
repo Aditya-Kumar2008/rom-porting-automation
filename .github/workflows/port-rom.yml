@@ -626,45 +626,16 @@ jobs:
           cat > "${FD}/MANUAL_FLASH_GUIDE.txt" << 'GUIDEEOF'
           ===== MANUAL FLASH GUIDE (Individual Partitions) =====
 
-          If super.img flash fails, use fastbootd mode instead:
-
-          Step 1: Enter fastbootd mode
-            fastboot reboot fastboot
-
-          Step 2: Delete old logical partitions to free space
-            fastboot delete-logical-partition product_a
-            fastboot delete-logical-partition product_b
-            fastboot delete-logical-partition system_ext_a
-            fastboot delete-logical-partition system_ext_b
-            fastboot delete-logical-partition mi_ext_a
-            fastboot delete-logical-partition mi_ext_b
-
-          Step 3: Flash partitions one by one
-            fastboot flash system_a images/system.img
-            fastboot flash vendor_a images/vendor.img
-            fastboot flash odm_a images/odm.img
-            fastboot flash vendor_dlkm_a images/vendor_dlkm.img
-
-          Step 4: Reboot to normal fastboot and flash boot images
-            fastboot reboot bootloader
-            fastboot flash boot images/boot.img
-            fastboot flash vendor_boot images/vendor_boot.img
-            fastboot flash vbmeta images/vbmeta.img --disable-verity --disable-verification
-            fastboot flash dtbo images/dtbo.img
-            fastboot flash modem images/modem.img
-            fastboot reboot
+          If super.img flash fails, use fastbootd mode instead.
+          Note: Individual partition images (system/vendor/odm) are NOT included 
+          in this ZIP to save space. To flash them manually, you must extract 
+          them from super.img using lpunpack.
           GUIDEEOF
-
-          # Also copy individual partition images for manual flashing
-          cd ${WORK_DIR}/output
-          for img in system.img vendor.img odm.img vendor_dlkm.img; do
-            [ -f "$img" ] && cp -v "$img" "${FD}/images/"
-          done
 
           # Build the ZIP
           cd "${FD}"
           FASTBOOT_ZIP="ColorOS_Fastboot_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
-          zip -r0 "${WORK_DIR}/output/${FASTBOOT_ZIP}" .
+          zip -r1 "${WORK_DIR}/output/${FASTBOOT_ZIP}" .
           echo "FASTBOOT_ZIP=${FASTBOOT_ZIP}" >> $GITHUB_ENV
           echo "Fastboot ZIP built: ${FASTBOOT_ZIP}"
           ls -lh "${WORK_DIR}/output/${FASTBOOT_ZIP}"

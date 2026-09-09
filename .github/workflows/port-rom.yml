@@ -207,18 +207,18 @@ jobs:
                   await page.goto("https://roms.danielspringer.at/index.php?view=ota")
                   await page.wait_for_load_state("networkidle")
                   
-                  # Select device
-                  device_select = page.locator("#otaDeviceSelect")
-                  await device_select.select_option(label="OnePlus 12R")
+                  # Select device (native select with id="device")
+                  device_select = page.locator("#device")
+                  await device_select.select_option(value="OP 12R")
                   await page.wait_for_timeout(1000)
                   
-                  # Select region
-                  region_select = page.locator("#otaRegionSelect")
-                  await region_select.select_option(label="India (IN)")
+                  # Select region (native select with id="region")
+                  region_select = page.locator("#region")
+                  await region_select.select_option(value="IN")
                   await page.wait_for_timeout(500)
                   
-                  # Select version (latest)
-                  version_select = page.locator("#otaVersionSelect")
+                  # Select version (latest - first option)
+                  version_select = page.locator("#version")
                   await version_select.select_option(index=0)
                   await page.wait_for_timeout(500)
                   

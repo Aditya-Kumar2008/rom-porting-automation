@@ -392,53 +392,26 @@ jobs:
           [ -d "${WORK_DIR}/coloros/extracted/product" ] && cp -rn "${WORK_DIR}/coloros/extracted/product/"* "${S}/" 2>/dev/null && echo "product merged"
           echo "After merge: $(du -sh ${S})"
 
-      - name: "🧹 Debloat system (fit super partition)"
+      - name: "🧹 Minor Debloat (Safe Mode)"
         run: |
           S="${WORK_DIR}/coloros/extracted/system"
-          echo "=== BEFORE debloat ==="
+          echo "=== BEFORE safe debloat ==="
           du -sh "${S}"
           cd "${S}"
 
-          # Remove known OPlus/ColorOS bloatware from my_stock
-          for dir in my_stock/app my_stock/priv-app; do
-            if [ -d "$dir" ]; then
-              echo "Cleaning $dir ($(du -sh $dir | cut -f1))"
-              rm -rf "$dir"
-              mkdir -p "$dir"
-            fi
-          done
-
-          # Remove bloatware from my_product
-          for dir in my_product/app my_product/priv-app; do
-            if [ -d "$dir" ]; then
-              echo "Cleaning $dir ($(du -sh $dir | cut -f1))"
-              rm -rf "$dir"
-              mkdir -p "$dir"
-            fi
-          done
-
-          # Remove bloatware from my_heytap and my_engineering
-          for dir in my_heytap/app my_engineering/app; do
-            [ -d "$dir" ] && rm -rf "$dir" && mkdir -p "$dir"
-          done
-
-          # Remove common Google/OEM bloat at top level
-          for bloat in app/Chrome app/Drive app/Maps app/Photos app/YouTube \
-                       priv-app/Velvet data-app reserve product/app product/priv-app; do
-            [ -d "$bloat" ] && echo "Removing $bloat" && rm -rf "$bloat"
-          done
-
-          # Remove large media that won't apply
-          find . -name "shutanimation.zip" -delete 2>/dev/null || true
-
-          echo "=== AFTER debloat ==="
-          du -sh "${S}"
+          # Only remove completely useless dummy folders to keep it clean.
+          # We are KEEPING all default Google apps, OEM apps, and OnePlus/ColorOS features.
+          
+          # Remove massive dummy bootanimations if they exist (usually 1440p 120fps ~ 150MB overhead)
+          # find . -name "bootanimation.zip" -size +20M -delete 2>/dev/null || true
 
           # Calculate expected EROFS size (rough: 55% compression ratio)
           RAW_BYTES=$(du -sb "${S}" | cut -f1)
           EST_IMG=$((RAW_BYTES * 55 / 100))
-          echo "Raw: $((RAW_BYTES / 1024 / 1024)) MiB, Estimated img: $((EST_IMG / 1024 / 1024)) MiB"
-          echo "Super limit: $((DYNAMIC_SIZE / 1024 / 1024)) MiB"
+          echo "=== AFTER safe debloat ==="
+          du -sh "${S}"
+          echo "Raw: $((RAW_BYTES / 1024 / 1024)) MiB, Estimated compressed system: $((EST_IMG / 1024 / 1024)) MiB"
+          echo "Super total limit: $((DYNAMIC_SIZE / 1024 / 1024)) MiB"
 
       - name: Repack system.img
         run: |

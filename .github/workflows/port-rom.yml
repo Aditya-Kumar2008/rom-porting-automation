@@ -429,7 +429,6 @@ jobs:
           done
 
           # Remove large media that won't apply
-          find . -name "bootanimation.zip" -size +5M -delete 2>/dev/null || true
           find . -name "shutanimation.zip" -delete 2>/dev/null || true
 
           echo "=== AFTER debloat ==="

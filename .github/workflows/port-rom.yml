@@ -207,31 +207,38 @@ jobs:
                   await page.goto("https://roms.danielspringer.at/index.php?view=ota")
                   await page.wait_for_load_state("networkidle")
                   
-                  # Select device (native select with id="device")
-                  device_select = page.locator("#device")
-                  await device_select.select_option(value="OP 12R")
+                  # Use JavaScript to set device value (native select is hidden behind custom picker)
+                  await page.evaluate('''() => {
+                      const sel = document.getElementById('device');
+                      sel.value = 'OP 12R';
+                      sel.dispatchEvent(new Event('change', { bubbles: true }));
+                  }''')
                   await page.wait_for_timeout(1000)
                   
-                  # Select region (native select with id="region")
-                  region_select = page.locator("#region")
-                  await region_select.select_option(value="IN")
+                  # Select region
+                  await page.evaluate('''() => {
+                      const sel = document.getElementById('region');
+                      sel.value = 'IN';
+                      sel.dispatchEvent(new Event('change', { bubbles: true }));
+                  }''')
                   await page.wait_for_timeout(500)
                   
-                  # Select version (latest - first option)
-                  version_select = page.locator("#version")
-                  await version_select.select_option(index=0)
+                  # Select version (first option)
+                  await page.evaluate('''() => {
+                      const sel = document.getElementById('version');
+                      sel.selectedIndex = 0;
+                      sel.dispatchEvent(new Event('change', { bubbles: true }));
+                  }''')
                   await page.wait_for_timeout(500)
                   
                   # Click resolve button
-                  resolve_btn = page.locator("#otaResolveBtn")
-                  await resolve_btn.click()
+                  await page.click('#otaResolveBtn')
                   
                   # Wait for result to appear
-                  result_box = page.locator("#resultBox")
-                  await result_box.wait_for_attribute("data-link-ready", "1", timeout=30000)
+                  await page.wait_for_selector('#resultBox[data-link-ready="1"]', timeout=30000)
                   
                   # Get the resolved URL
-                  url = await result_box.get_attribute("data-url")
+                  url = await page.evaluate('document.getElementById("resultBox").getAttribute("data-url")')
                   
                   await browser.close()
                   return url

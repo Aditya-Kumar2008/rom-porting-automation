@@ -502,15 +502,12 @@ jobs:
             exit 0
           fi
           
-          # Create rclone config
-          cat > ~/.config/rclone/rclone.conf << 'RCLONE_EOF'
-          [gdrive]
-          type = drive
-          scope = drive
-          service_account_file = /tmp/sa_key.json
-          RCLONE_EOF
-          
-          # Add root_folder_id with variable expansion
+          # Create rclone config (use echo to avoid heredoc indentation issues)
+          mkdir -p ~/.config/rclone
+          echo "[gdrive]" > ~/.config/rclone/rclone.conf
+          echo "type = drive" >> ~/.config/rclone/rclone.conf
+          echo "scope = drive" >> ~/.config/rclone/rclone.conf
+          echo "service_account_file = /tmp/sa_key.json" >> ~/.config/rclone/rclone.conf
           echo "root_folder_id = ${GDRIVE_FOLDER_ID}" >> ~/.config/rclone/rclone.conf
           
           RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
@@ -562,6 +559,7 @@ jobs:
           echo "GDRIVE_STATUS=success" >> $GITHUB_ENV
 
       - name: 🚀 Upload to Gofile
+        if: always()
         id: gofile_upload
         env:
           GOFILE_TOKEN: ${{ secrets.GOFILE_TOKEN }}

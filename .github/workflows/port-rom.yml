@@ -22,6 +22,8 @@ env:
   SCREEN_SIZE: "12.1"
   DONOR_BRAND: OnePlus
   DONOR_MODEL: "12R 5G"
+  SUPER_SIZE: "9663676416"
+  DYNAMIC_SIZE: "9659482112"
 
 permissions:
   contents: write
@@ -46,12 +48,20 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq erofs-utils wget unzip zip jq curl aria2 python3-pip
+          sudo apt-get install -y -qq erofs-utils wget unzip zip jq curl aria2 python3-pip android-sdk-libsparse-utils
           cd /tmp
+          wget -q "https://raw.githubusercontent.com/Rprop/aosp15_partition_tools/main/linux_glibc_x86_64/lpmake" -O lpmake || true
+          chmod +x lpmake 2>/dev/null && sudo mv lpmake /usr/local/bin/ || echo "::warning::lpmake download failed"
+          wget -q "https://raw.githubusercontent.com/Rprop/aosp15_partition_tools/main/linux_glibc_x86_64/lpunpack" -O lpunpack || true
+          chmod +x lpunpack 2>/dev/null && sudo mv lpunpack /usr/local/bin/ || true
+          wget -q "https://raw.githubusercontent.com/Rprop/aosp15_partition_tools/main/linux_glibc_x86_64/lpdumps" -O lpdumps || true
+          chmod +x lpdumps 2>/dev/null && sudo mv lpdumps /usr/local/bin/lpdump || true
           wget -q "https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz" -O pd.tar.gz
           tar xzf pd.tar.gz
           sudo mv payload-dumper-go /usr/local/bin/
           rm pd.tar.gz
+          echo "=== Installed tools ==="
+          which lpmake img2simg payload-dumper-go mkfs.erofs 2>&1 || true
 
       - name: 🔐 Validate ROM URLs
         shell: python
@@ -380,7 +390,56 @@ jobs:
           S="${WORK_DIR}/coloros/extracted/system"
           [ -d "${WORK_DIR}/coloros/extracted/system_ext" ] && cp -rn "${WORK_DIR}/coloros/extracted/system_ext/"* "${S}/" 2>/dev/null && echo "system_ext merged"
           [ -d "${WORK_DIR}/coloros/extracted/product" ] && cp -rn "${WORK_DIR}/coloros/extracted/product/"* "${S}/" 2>/dev/null && echo "product merged"
-          echo "Final system: $(du -sh ${S})"
+          echo "After merge: $(du -sh ${S})"
+
+      - name: "🧹 Debloat system (fit super partition)"
+        run: |
+          S="${WORK_DIR}/coloros/extracted/system"
+          echo "=== BEFORE debloat ==="
+          du -sh "${S}"
+          cd "${S}"
+
+          # Remove known OPlus/ColorOS bloatware from my_stock
+          for dir in my_stock/app my_stock/priv-app; do
+            if [ -d "$dir" ]; then
+              echo "Cleaning $dir ($(du -sh $dir | cut -f1))"
+              rm -rf "$dir"
+              mkdir -p "$dir"
+            fi
+          done
+
+          # Remove bloatware from my_product
+          for dir in my_product/app my_product/priv-app; do
+            if [ -d "$dir" ]; then
+              echo "Cleaning $dir ($(du -sh $dir | cut -f1))"
+              rm -rf "$dir"
+              mkdir -p "$dir"
+            fi
+          done
+
+          # Remove bloatware from my_heytap and my_engineering
+          for dir in my_heytap/app my_engineering/app; do
+            [ -d "$dir" ] && rm -rf "$dir" && mkdir -p "$dir"
+          done
+
+          # Remove common Google/OEM bloat at top level
+          for bloat in app/Chrome app/Drive app/Maps app/Photos app/YouTube \
+                       priv-app/Velvet data-app reserve product/app product/priv-app; do
+            [ -d "$bloat" ] && echo "Removing $bloat" && rm -rf "$bloat"
+          done
+
+          # Remove large media that won't apply
+          find . -name "bootanimation.zip" -size +5M -delete 2>/dev/null || true
+          find . -name "shutanimation.zip" -delete 2>/dev/null || true
+
+          echo "=== AFTER debloat ==="
+          du -sh "${S}"
+
+          # Calculate expected EROFS size (rough: 55% compression ratio)
+          RAW_BYTES=$(du -sb "${S}" | cut -f1)
+          EST_IMG=$((RAW_BYTES * 55 / 100))
+          echo "Raw: $((RAW_BYTES / 1024 / 1024)) MiB, Estimated img: $((EST_IMG / 1024 / 1024)) MiB"
+          echo "Super limit: $((DYNAMIC_SIZE / 1024 / 1024)) MiB"
 
       - name: Repack system.img
         run: |
@@ -400,56 +459,232 @@ jobs:
 
       - name: Copy HyperOS boot images
         run: |
-          for img in boot.img vendor_boot.img vendor_dlkm.img modem.img; do
+          for img in boot.img vendor_boot.img vendor_dlkm.img modem.img vbmeta.img vbmeta_system.img dtbo.img; do
             [ -f "${WORK_DIR}/hyperos/images/${img}" ] && cp -v "${WORK_DIR}/hyperos/images/${img}" ${WORK_DIR}/output/
           done
           echo "=== ALL OUTPUT ==="
           ls -lh ${WORK_DIR}/output/
 
-      - name: Build recovery flashable ZIP for OrangeFox
+      - name: "🔧 Build super.img with lpmake"
         run: |
-          FD="${WORK_DIR}/recovery-flashable"
-          mkdir -p ${FD}/META-INF/com/google/android
+          cd ${WORK_DIR}/output
+          echo "=== Partition images ==="
+          ls -lh system.img vendor.img odm.img vendor_dlkm.img 2>/dev/null || true
 
-          # Write update-binary as printf (no heredoc)
-          printf '#!/sbin/sh\nset -e\nOUTFD=$(ps | grep -v "grep" | grep -oE "update_binary(.*)" | cut -d" " -f3)\nui_print() { echo "ui_print $1" > /proc/self/fd/$OUTFD; echo "ui_print" > /proc/self/fd/$OUTFD; }\nset_progress() { echo "set_progress $1" > /proc/self/fd/$OUTFD; }\nSLOT=$(getprop ro.boot.slot_suffix 2>/dev/null || echo "")\nui_print "============================================"\nui_print "  ColorOS ROM Port for Poco Pad 5G (ruan)"\nui_print "  Based on HyperOS + OnePlus 12R"\nui_print "  Active slot: ${SLOT:-none}"\nui_print "============================================"\nui_print ""\nfor BD in /dev/block/bootdevice/by-name /dev/block/by-name /dev/block/platform/*/by-name; do\n  [ -d "$BD" ] && BLOCK_PATH="$BD" && break\ndone\nui_print "Block path: ${BLOCK_PATH}"\nset_progress 0.1\nui_print "--- Flashing static partitions ---"\nfor P in boot vendor_boot modem dtbo; do\n  IMG="/tmp/${P}.img"\n  DEV="${BLOCK_PATH}/${P}${SLOT}"\n  [ ! -b "$DEV" ] && DEV="${BLOCK_PATH}/${P}"\n  if [ -f "$IMG" ] && [ -b "$DEV" ]; then\n    ui_print "Flashing ${P}..."\n    dd if="$IMG" of="$DEV" bs=4096 2>/dev/null\n    sync\n    ui_print "  Done"\n  fi\ndone\nset_progress 0.5\nui_print "--- Flashing dynamic partitions ---"\nui_print "system/vendor/odm are in super partition"\nfor P in system vendor odm; do\n  IMG="/tmp/${P}.img"\n  DEV="/dev/block/mapper/${P}${SLOT}"\n  [ ! -b "$DEV" ] && DEV="${BLOCK_PATH}/${P}${SLOT}"\n  [ ! -b "$DEV" ] && DEV="${BLOCK_PATH}/${P}"\n  if [ -f "$IMG" ] && [ -b "$DEV" ]; then\n    ui_print "Flashing ${P}..."\n    dd if="$IMG" of="$DEV" bs=4096 2>/dev/null\n    sync\n    ui_print "  Done"\n  elif [ -f "$IMG" ]; then\n    ui_print "WARNING: Cannot find ${P} device"\n  fi\ndone\nset_progress 1.0\nui_print ""\nui_print "============================================"\nui_print "  ROM flash complete! Reboot now"\nui_print "============================================"\nexit 0\n' > "${FD}/META-INF/com/google/android/update-binary"
+          SYS_SIZE=$(stat -c '%s' system.img)
+          VND_SIZE=$(stat -c '%s' vendor.img)
+          ODM_SIZE=$(stat -c '%s' odm.img 2>/dev/null || echo 0)
+          VDLKM_SIZE=$(stat -c '%s' vendor_dlkm.img 2>/dev/null || echo 0)
 
-          # Write updater-script as printf
-          printf 'show_progress(0.1, 2.0);\nassert(getprop("ro.product.device") == "ruan" || getprop("ro.build.product") == "ruan" || getprop("ro.product.device") == "dizi" || getprop("ro.build.product") == "dizi", "This ROM is for Poco Pad 5G only!");\nui_print("Extracting images...");\npackage_extract_file("system.img", "/tmp/system.img");\npackage_extract_file("vendor.img", "/tmp/vendor.img");\npackage_extract_file("odm.img", "/tmp/odm.img");\npackage_extract_file("boot.img", "/tmp/boot.img");\npackage_extract_file("vendor_boot.img", "/tmp/vendor_boot.img");\npackage_extract_file("modem.img", "/tmp/modem.img");\npackage_extract_file("META-INF/com/google/android/update-binary", "/tmp/update-binary");\nrun_program("/sbin/chmod", "755", "/tmp/update-binary");\nshow_progress(0.3, 1.0);\nui_print("Flashing...");\nrun_program("/sbin/sh", "/tmp/update-binary");\nshow_progress(1.0, 0);\n' > "${FD}/META-INF/com/google/android/updater-script"
+          # Align to 4096 boundary
+          align() { echo $(( ($1 + 4095) / 4096 * 4096 )); }
+          SYS_SIZE=$(align $SYS_SIZE)
+          VND_SIZE=$(align $VND_SIZE)
+          ODM_SIZE=$(align $ODM_SIZE)
+          VDLKM_SIZE=$(align $VDLKM_SIZE)
 
-          # Copy ALL images
-          for img in ${WORK_DIR}/output/*.img; do
-            [ -f "$img" ] && cp -v "$img" ${FD}/
+          TOTAL=$((SYS_SIZE + VND_SIZE + ODM_SIZE + VDLKM_SIZE))
+          echo "Total partition data: $((TOTAL / 1024 / 1024)) MiB"
+          echo "Dynamic limit: $((DYNAMIC_SIZE / 1024 / 1024)) MiB (${DYNAMIC_SIZE})"
+          echo "Super size: $((SUPER_SIZE / 1024 / 1024)) MiB (${SUPER_SIZE})"
+
+          if [ "$TOTAL" -gt "$DYNAMIC_SIZE" ]; then
+            echo "::error::Total ($TOTAL) exceeds dynamic partition limit ($DYNAMIC_SIZE)!"
+            echo "::error::Need to debloat $((( TOTAL - DYNAMIC_SIZE ) / 1024 / 1024)) MiB more"
+            exit 1
+          fi
+
+          GROUP_SIZE=$TOTAL
+
+          # Build lpmake command
+          LPMAKE_CMD="lpmake"
+          LPMAKE_CMD="${LPMAKE_CMD} --metadata-size 65536"
+          LPMAKE_CMD="${LPMAKE_CMD} --metadata-slots 3"
+          LPMAKE_CMD="${LPMAKE_CMD} --device super:${SUPER_SIZE}"
+          LPMAKE_CMD="${LPMAKE_CMD} --group qti_dynamic_partitions_a:${GROUP_SIZE}"
+          LPMAKE_CMD="${LPMAKE_CMD} --partition system_a:readonly:${SYS_SIZE}:qti_dynamic_partitions_a --image system_a=system.img"
+          LPMAKE_CMD="${LPMAKE_CMD} --partition vendor_a:readonly:${VND_SIZE}:qti_dynamic_partitions_a --image vendor_a=vendor.img"
+
+          if [ -f odm.img ] && [ "$ODM_SIZE" -gt 0 ]; then
+            LPMAKE_CMD="${LPMAKE_CMD} --partition odm_a:readonly:${ODM_SIZE}:qti_dynamic_partitions_a --image odm_a=odm.img"
+          fi
+
+          if [ -f vendor_dlkm.img ] && [ "$VDLKM_SIZE" -gt 0 ]; then
+            LPMAKE_CMD="${LPMAKE_CMD} --partition vendor_dlkm_a:readonly:${VDLKM_SIZE}:qti_dynamic_partitions_a --image vendor_dlkm_a=vendor_dlkm.img"
+          fi
+
+          # Empty partitions for product/system_ext (merged into system)
+          LPMAKE_CMD="${LPMAKE_CMD} --partition product_a:readonly:0:qti_dynamic_partitions_a"
+          LPMAKE_CMD="${LPMAKE_CMD} --partition system_ext_a:readonly:0:qti_dynamic_partitions_a"
+
+          LPMAKE_CMD="${LPMAKE_CMD} --sparse --output super.img"
+
+          echo "=== Running lpmake ==="
+          echo "$LPMAKE_CMD"
+          $LPMAKE_CMD
+
+          ls -lh super.img
+          echo "SUPER_IMG=super.img" >> $GITHUB_ENV
+
+      - name: "📦 Build fastboot flashable package"
+        run: |
+          FD="${WORK_DIR}/fastboot-pkg"
+          mkdir -p "${FD}/images"
+          cd ${WORK_DIR}/output
+
+          # Copy super.img
+          cp -v super.img "${FD}/images/"
+
+          # Copy boot-related images
+          for img in boot.img vendor_boot.img vbmeta.img vbmeta_system.img dtbo.img modem.img; do
+            [ -f "$img" ] && cp -v "$img" "${FD}/images/"
           done
 
-          cd ${FD}
-          RECOVERY_ZIP="ColorOS_Recovery_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
-          zip -r9 ${WORK_DIR}/output/${RECOVERY_ZIP} .
-          echo "RECOVERY_ZIP=${RECOVERY_ZIP}" >> $GITHUB_ENV
-          echo "Recovery ZIP built: ${RECOVERY_ZIP}"
-          ls -lh ${WORK_DIR}/output/${RECOVERY_ZIP}
+          # Create flash script for Linux/Mac
+          cat > "${FD}/flash_all.sh" << 'FLASHEOF'
+          #!/bin/bash
+          set -e
+          echo "============================================"
+          echo "  ColorOS Port for Poco Pad 5G (ruan)"
+          echo "  Fastboot Flashable ROM"
+          echo "============================================"
+          echo ""
+          echo "WARNING: This will ERASE all data!"
+          echo "Make sure bootloader is unlocked."
+          echo ""
+          read -p "Press ENTER to continue or Ctrl+C to cancel..."
+
+          CD="$(cd "$(dirname "$0")" && pwd)"
+          IMG="${CD}/images"
+
+          echo "[1/6] Flashing super.img (contains system+vendor+odm)..."
+          fastboot flash super "${IMG}/super.img"
+
+          echo "[2/6] Flashing boot..."
+          fastboot flash boot "${IMG}/boot.img"
+
+          echo "[3/6] Flashing vendor_boot..."
+          fastboot flash vendor_boot "${IMG}/vendor_boot.img"
+
+          echo "[4/6] Disabling AVB verification..."
+          fastboot flash vbmeta "${IMG}/vbmeta.img" --disable-verity --disable-verification 2>/dev/null || \
+            fastboot flash vbmeta "${IMG}/vbmeta.img"
+          [ -f "${IMG}/vbmeta_system.img" ] && fastboot flash vbmeta_system "${IMG}/vbmeta_system.img"
+
+          echo "[5/6] Flashing dtbo..."
+          [ -f "${IMG}/dtbo.img" ] && fastboot flash dtbo "${IMG}/dtbo.img"
+
+          echo "[6/6] Flashing modem..."
+          [ -f "${IMG}/modem.img" ] && fastboot flash modem "${IMG}/modem.img"
 
           echo ""
-          echo "=== ALL OUTPUT ==="
-          ls -lh ${WORK_DIR}/output/
+          echo "============================================"
+          echo "  Flash complete! Rebooting..."
+          echo "============================================"
+          fastboot reboot
+          FLASHEOF
+          chmod +x "${FD}/flash_all.sh"
+
+          # Create flash script for Windows
+          cat > "${FD}/flash_all.bat" << 'BATEOF'
+          @echo off
+          echo ============================================
+          echo   ColorOS Port for Poco Pad 5G (ruan)
+          echo   Fastboot Flashable ROM
+          echo ============================================
+          echo.
+          echo WARNING: This will ERASE all data!
+          pause
+
+          echo [1/6] Flashing super.img...
+          fastboot flash super images\super.img
+
+          echo [2/6] Flashing boot...
+          fastboot flash boot images\boot.img
+
+          echo [3/6] Flashing vendor_boot...
+          fastboot flash vendor_boot images\vendor_boot.img
+
+          echo [4/6] Disabling AVB...
+          fastboot flash vbmeta images\vbmeta.img --disable-verity --disable-verification
+          if exist images\vbmeta_system.img fastboot flash vbmeta_system images\vbmeta_system.img
+
+          echo [5/6] Flashing dtbo...
+          if exist images\dtbo.img fastboot flash dtbo images\dtbo.img
+
+          echo [6/6] Flashing modem...
+          if exist images\modem.img fastboot flash modem images\modem.img
+
+          echo.
+          echo ============================================
+          echo   Flash complete! Rebooting...
+          echo ============================================
+          fastboot reboot
+          pause
+          BATEOF
+
+          # Create manual fastbootd instruction for individual flashing
+          cat > "${FD}/MANUAL_FLASH_GUIDE.txt" << 'GUIDEEOF'
+          ===== MANUAL FLASH GUIDE (Individual Partitions) =====
+
+          If super.img flash fails, use fastbootd mode instead:
+
+          Step 1: Enter fastbootd mode
+            fastboot reboot fastboot
+
+          Step 2: Delete old logical partitions to free space
+            fastboot delete-logical-partition product_a
+            fastboot delete-logical-partition product_b
+            fastboot delete-logical-partition system_ext_a
+            fastboot delete-logical-partition system_ext_b
+            fastboot delete-logical-partition mi_ext_a
+            fastboot delete-logical-partition mi_ext_b
+
+          Step 3: Flash partitions one by one
+            fastboot flash system_a images/system.img
+            fastboot flash vendor_a images/vendor.img
+            fastboot flash odm_a images/odm.img
+            fastboot flash vendor_dlkm_a images/vendor_dlkm.img
+
+          Step 4: Reboot to normal fastboot and flash boot images
+            fastboot reboot bootloader
+            fastboot flash boot images/boot.img
+            fastboot flash vendor_boot images/vendor_boot.img
+            fastboot flash vbmeta images/vbmeta.img --disable-verity --disable-verification
+            fastboot flash dtbo images/dtbo.img
+            fastboot flash modem images/modem.img
+            fastboot reboot
+          GUIDEEOF
+
+          # Also copy individual partition images for manual flashing
+          cd ${WORK_DIR}/output
+          for img in system.img vendor.img odm.img vendor_dlkm.img; do
+            [ -f "$img" ] && cp -v "$img" "${FD}/images/"
+          done
+
+          # Build the ZIP
+          cd "${FD}"
+          FASTBOOT_ZIP="ColorOS_Fastboot_${DEVICE_CODENAME}_$(date +%Y%m%d).zip"
+          zip -r0 "${WORK_DIR}/output/${FASTBOOT_ZIP}" .
+          echo "FASTBOOT_ZIP=${FASTBOOT_ZIP}" >> $GITHUB_ENV
+          echo "Fastboot ZIP built: ${FASTBOOT_ZIP}"
+          ls -lh "${WORK_DIR}/output/${FASTBOOT_ZIP}"
 
       - name: 🗜️ Validate ZIP integrity
         run: |
           set -Eeuo pipefail
-          ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
+          ZF="${WORK_DIR}/output/${FASTBOOT_ZIP}"
           if [ ! -f "$ZF" ]; then
-            echo "::error::Recovery ZIP not found: ${RECOVERY_ZIP}"
+            echo "::error::Fastboot ZIP not found: ${FASTBOOT_ZIP}"
             exit 1
           fi
-          
-          # ZIP integrity check (DeadZone pattern)
+
           python3 -m zipfile -t "$ZF" >/dev/null || {
-            echo "::error::ZIP integrity check failed: ${RECOVERY_ZIP}"
+            echo "::error::ZIP integrity check failed: ${FASTBOOT_ZIP}"
             exit 1
           }
           echo "✅ ZIP integrity verified"
-          
-          # File size reporting (DeadZone pattern)
+
           final_size_bytes="$(stat -c '%s' "$ZF")"
           final_size_human="$(python3 - "$final_size_bytes" <<'PY'
           import sys
@@ -462,8 +697,8 @@ jobs:
               value /= 1024
           PY
           )"
-          echo "📦 Recovery ZIP: ${RECOVERY_ZIP} (${final_size_human})"
-          echo "RECOVERY_ZIP_SIZE=${final_size_human}" >> $GITHUB_ENV
+          echo "📦 Fastboot ZIP: ${FASTBOOT_ZIP} (${final_size_human})"
+          echo "FASTBOOT_ZIP_SIZE=${final_size_human}" >> $GITHUB_ENV
 
       - name: ☁️ Upload to Google Drive (optional)
         id: gdrive_upload
@@ -512,9 +747,9 @@ jobs:
           
           RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
           UPLOAD_DIR="ColorOS_Ruan_$(date +%Y%m%d)"
-          ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
+          ZF="${WORK_DIR}/output/${FASTBOOT_ZIP}"
           
-          echo "Uploading ${RECOVERY_ZIP} to Google Drive..."
+          echo "Uploading ${FASTBOOT_ZIP} to Google Drive..."
           echo "Folder ID: ${GDRIVE_FOLDER_ID}"
           
           # Test connection first
@@ -546,9 +781,9 @@ jobs:
           }
           
           # Make file public and get link
-          rclone link "gdrive:${UPLOAD_DIR}/${RECOVERY_ZIP}" --config "$RCLONE_CONF" 2>/dev/null | tail -n1 | tr -d '\r' || true
+          rclone link "gdrive:${UPLOAD_DIR}/${FASTBOOT_ZIP}" --config "$RCLONE_CONF" 2>/dev/null | tail -n1 | tr -d '\r' || true
           
-          drive_url="$(rclone link "gdrive:${UPLOAD_DIR}/${RECOVERY_ZIP}" --config "$RCLONE_CONF" 2>/dev/null | tail -n1 | tr -d '\r' || true)"
+          drive_url="$(rclone link "gdrive:${UPLOAD_DIR}/${FASTBOOT_ZIP}" --config "$RCLONE_CONF" 2>/dev/null | tail -n1 | tr -d '\r' || true)"
           if [ -n "$drive_url" ]; then
             echo "✅ Google Drive: ${drive_url}"
             echo "GDRIVE_URL=${drive_url}" >> $GITHUB_ENV
@@ -565,11 +800,11 @@ jobs:
           GOFILE_TOKEN: ${{ secrets.GOFILE_TOKEN }}
         run: |
           set -Eeuo pipefail
-          ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
+          ZF="${WORK_DIR}/output/${FASTBOOT_ZIP}"
           [ -f "$ZF" ] || { echo "::warning::ZIP not found, skipping Gofile"; exit 0; }
           [ -z "${GOFILE_TOKEN:-}" ] && { echo "::warning::GOFILE_TOKEN not set, skipping Gofile"; exit 0; }
           
-          echo "Uploading ${RECOVERY_ZIP} to Gofile (${RECOVERY_ZIP_SIZE:-unknown})..."
+          echo "Uploading ${FASTBOOT_ZIP} to Gofile (${FASTBOOT_ZIP_SIZE:-unknown})..."
           
           # Gofile API v3: POST https://upload.gofile.io/uploadfile
           # Auth via Authorization header
@@ -619,10 +854,10 @@ jobs:
           sudo apt-get install -y sshpass > /dev/null 2>&1 || true
           
           UPLOAD_DIR="ColorOS_Ruan_$(date +%Y%m%d)"
-          ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
+          ZF="${WORK_DIR}/output/${FASTBOOT_ZIP}"
           [ -f "$ZF" ] || { echo "::warning::ZIP not found, skipping SourceForge"; exit 0; }
           
-          echo "Uploading ${RECOVERY_ZIP} to SourceForge (${RECOVERY_ZIP_SIZE:-unknown})..."
+          echo "Uploading ${FASTBOOT_ZIP} to SourceForge (${FASTBOOT_ZIP_SIZE:-unknown})..."
           
           # Create remote directory first via ssh (not sftp to avoid 2GB limit)
           set +e
@@ -635,12 +870,12 @@ jobs:
           sshpass -p "$SF_PASSWORD" scp -o StrictHostKeyChecking=no \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             "$ZF" \
-            "${SF_USERNAME}@frs.sourceforge.net:/home/frs/project/${SF_PROJECT}/${UPLOAD_DIR}/${RECOVERY_ZIP}"
+            "${SF_USERNAME}@frs.sourceforge.net:/home/frs/project/${SF_PROJECT}/${UPLOAD_DIR}/${FASTBOOT_ZIP}"
           sf_status=$?
           set -e
           
           if [ $sf_status -eq 0 ]; then
-            sf_url="https://sourceforge.net/projects/${SF_PROJECT}/files/${UPLOAD_DIR}/${RECOVERY_ZIP}"
+            sf_url="https://sourceforge.net/projects/${SF_PROJECT}/files/${UPLOAD_DIR}/${FASTBOOT_ZIP}"
             echo "✅ SourceForge: ${sf_url}"
             echo "SF_URL=${sf_url}" >> $GITHUB_ENV
           else
@@ -653,7 +888,7 @@ jobs:
             sf_status=$?
             set -e
             if [ $sf_status -eq 0 ]; then
-              sf_url="https://sourceforge.net/projects/${SF_PROJECT}/files/${UPLOAD_DIR}/${RECOVERY_ZIP}"
+              sf_url="https://sourceforge.net/projects/${SF_PROJECT}/files/${UPLOAD_DIR}/${FASTBOOT_ZIP}"
               echo "✅ SourceForge (sftp): ${sf_url}"
               echo "SF_URL=${sf_url}" >> $GITHUB_ENV
             else
@@ -672,8 +907,8 @@ jobs:
           echo "  Device: ${DEVICE_NAME} (${DEVICE_CODENAME})"
           echo "  Donor: ${DONOR_BRAND} ${DONOR_MODEL}"
           echo ""
-          echo "  Recovery ZIP: ${RECOVERY_ZIP}"
-          echo "  ZIP Size: ${RECOVERY_ZIP_SIZE:-unknown}"
+          echo "  Fastboot ZIP: ${FASTBOOT_ZIP}"
+          echo "  ZIP Size: ${FASTBOOT_ZIP_SIZE:-unknown}"
           echo ""
           echo "  Download Links:"
           if [ -n "${GOFILE_URL:-}" ]; then

@@ -59,7 +59,7 @@ jobs:
           HYPEROS_URL: ${{ github.event.inputs.hyperos_url }}
           COLOROS_URL: ${{ github.event.inputs.coloros_url }}
         run: |
-          import os, sys, re
+          import os, sys, re, json
           from urllib.parse import urlparse
 
           errors = 0
@@ -88,6 +88,11 @@ jobs:
               else:
                   remaining = (expires_at - now) // 60
                   print(f"⚠️ ColorOS URL expires in {remaining} minutes")
+          
+          # Check if URL is a downloadCheck URL that needs resolution
+          if 'downloadCheck' in coloros_url:
+              print("⚠️ URL is a downloadCheck URL - will attempt resolution during download")
+              print("   If download fails, get a fresh resolved URL from https://roms.danielspringer.at/index.php?view=ota")
           
           if errors > 0:
               sys.exit(1)
@@ -167,7 +172,44 @@ jobs:
           done
 
       - name: Download ColorOS ROM
-        run: aria2c -x16 -s16 -j5 --file-allocation=none -d ${WORK_DIR}/coloros -o coloros-rom.zip "${{ github.event.inputs.coloros_url }}"
+        run: |
+          set -Eeuo pipefail
+          COLOROS_URL="${{ github.event.inputs.coloros_url }}"
+          
+          # If URL is a downloadCheck URL, try to resolve it first
+          if echo "$COLOROS_URL" | grep -q "downloadCheck"; then
+            echo "⚠️ URL is downloadCheck - attempting resolution via OTA resolver..."
+            
+            # Try to resolve using the website's resolver API
+            # First get a session by visiting the page
+            curl -s -c /tmp/ota_cookies.txt "https://roms.danielspringer.at/index.php?view=ota" > /dev/null 2>&1 || true
+            
+            # Extract the OTA ID from the URL parameters
+            OTA_ID=$(echo "$COLOROS_URL" | grep -oP 'id=[^&]+' | head -1 | cut -d= -f2)
+            echo "OTA ID: $OTA_ID"
+            
+            # Try to get a fresh source_url from the API (this gives downloadCheck, but may have different signature)
+            RESOLVED_URL=$(curl -s "https://roms.danielspringer.at/api/ota.php?id=${OTA_ID}&format=json" | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          if d.get('release') and d['release'].get('source_url'):
+              url = d['release']['source_url']
+              if 'downloadCheck' not in url:
+                  print(url)
+          " 2>/dev/null || echo "")
+            
+            if [ -n "$RESOLVED_URL" ] && [ "$RESOLVED_URL" != "None" ]; then
+              echo "✅ Resolved URL from API"
+              COLOROS_URL="$RESOLVED_URL"
+            else
+              echo "⚠️ API returned downloadCheck URL - using browser-resolved URL from defaults"
+              # Use the default URL which should be a pre-resolved URL
+              COLOROS_URL="https://gauss-compota-c-fr.allawnofs.com/remove-e3fe1ae8ce09716b9b69a4d5de2a3f93/g-10eab6008d5642cf42abd2aa41f847cb/component-ota/26/07/20/3924d761f9cd42b19b55cb0bf8400819.zip?sign=416ab701de858a7bca7d93c66d8d6f7b&t=6a9f9b30&x-oss-signature=tpPBP2yculAb3uV7QpvaUkEOtE8rn%2BSRtnw1sz%2BKfLk%3D&x-oss-signature-version=OSS2&x-oss-expires=1788846648&x-oss-access-key-id=LTAI5t7LQqPWs3796pRv6Avx"
+            fi
+          fi
+          
+          echo "Downloading ColorOS ROM..."
+          aria2c -x16 -s16 -j5 --file-allocation=none -d ${WORK_DIR}/coloros -o coloros-rom.zip "$COLOROS_URL"
 
       - name: Dump ColorOS partitions
         run: |

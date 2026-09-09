@@ -713,28 +713,27 @@ jobs:
           # Create remote folder
           rclone mkdir "gdrive:${UPLOAD_DIR}" --config "$RCLONE_CONF" 2>/dev/null || true
           
-          # Upload with progress
-          echo "Starting upload..."
-          rclone copy "$ZF" "gdrive:${UPLOAD_DIR}/" \
-            --config "$RCLONE_CONF" \
-            --progress --stats 30s 2>&1 || {
-            echo "::warning::Google Drive upload failed"
-            echo "GDRIVE_STATUS=failed" >> $GITHUB_ENV
-            exit 0
-          }
-          
-          # Make file public and get link
-          rclone link "gdrive:${UPLOAD_DIR}/${FASTBOOT_ZIP}" --config "$RCLONE_CONF" 2>/dev/null | tail -n1 | tr -d '\r' || true
-          
-          drive_url="$(rclone link "gdrive:${UPLOAD_DIR}/${FASTBOOT_ZIP}" --config "$RCLONE_CONF" 2>/dev/null | tail -n1 | tr -d '\r' || true)"
-          if [ -n "$drive_url" ]; then
-            echo "✅ Google Drive: ${drive_url}"
-            echo "GDRIVE_URL=${drive_url}" >> $GITHUB_ENV
-          else
-            echo "✅ Google Drive: https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}"
-            echo "GDRIVE_URL=https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}" >> $GITHUB_ENV
-          fi
-          echo "GDRIVE_STATUS=success" >> $GITHUB_ENV
+            # Upload with progress
+            echo "Starting upload..."
+            set +e
+            rclone copy "$ZF" "gdrive:${UPLOAD_DIR}/" --config "$RCLONE_CONF" --progress --stats 30s 2>&1
+            cp_status=$?
+            if [ $cp_status -eq 0 ]; then
+              rclone link "gdrive:${UPLOAD_DIR}/${FASTBOOT_ZIP}" --config "$RCLONE_CONF" 2>/dev/null | tail -n1 | tr -d '\r' > /tmp/drive_url || true
+              drive_url=$(cat /tmp/drive_url || echo "")
+              if [ -n "$drive_url" ] && [[ "$drive_url" == http* ]]; then
+                echo "✅ Google Drive: ${drive_url}"
+                echo "GDRIVE_URL=${drive_url}" >> $GITHUB_ENV
+              else
+                echo "✅ Google Drive: https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}"
+                echo "GDRIVE_URL=https://drive.google.com/drive/folders/${GDRIVE_FOLDER_ID}" >> $GITHUB_ENV
+              fi
+              echo "GDRIVE_STATUS=success" >> $GITHUB_ENV
+            else
+              echo "::warning::Google Drive upload failed (exit code $cp_status)"
+              echo "GDRIVE_STATUS=failed" >> $GITHUB_ENV
+            fi
+            set -e
 
       - name: 🚀 Upload to Gofile
         if: always()

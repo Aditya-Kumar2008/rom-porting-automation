@@ -100,13 +100,23 @@ jobs:
           SF_PROJECT: ${{ secrets.SF_PROJECT }}
           GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOFILE_TOKEN: ${{ secrets.GOFILE_TOKEN }}
         run: |
           set -Eeuo pipefail
           errors=0
-          for var in SF_USERNAME SF_PASSWORD SF_PROJECT GDRIVE_SA_KEY GDRIVE_FOLDER_ID; do
+          # SourceForge is required
+          for var in SF_USERNAME SF_PASSWORD SF_PROJECT; do
             if [ -z "${!var:-}" ]; then
               echo "::error::Missing required secret: ${var}"
               errors=$((errors+1))
+            else
+              echo "✅ ${var} is set"
+            fi
+          done
+          # Optional upload services
+          for var in GDRIVE_SA_KEY GDRIVE_FOLDER_ID GOFILE_TOKEN; do
+            if [ -z "${!var:-}" ]; then
+              echo "⚠️ Optional secret not set: ${var}"
             else
               echo "✅ ${var} is set"
             fi
@@ -115,7 +125,7 @@ jobs:
             echo "::error::${errors} required secrets are missing"
             exit 1
           fi
-          echo "✅ All publishing secrets validated"
+          echo "✅ Publishing secrets validated (SourceForge required, others optional)"
 
       - name: 💾 Verify build storage
         run: |
@@ -414,6 +424,61 @@ jobs:
           fi
           echo "GDRIVE_STATUS=success" >> $GITHUB_ENV
 
+      - name: 🚀 Upload to Gofile
+        id: gofile_upload
+        env:
+          GOFILE_TOKEN: ${{ secrets.GOFILE_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          ZF="${WORK_DIR}/output/${RECOVERY_ZIP}"
+          [ -f "$ZF" ] || { echo "::warning::ZIP not found, skipping Gofile"; exit 0; }
+          
+          echo "Uploading ${RECOVERY_ZIP} to Gofile (${RECOVERY_ZIP_SIZE:-unknown})..."
+          
+          # Get best server
+          server="$(curl -s https://api.gofile.io/servers | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          if d.get('status')=='ok':
+              servers = d['data']['servers']
+              # Pick server with fewest guests
+              best = min(servers, key=lambda s: s.get('guests', 999))
+              print(best['name'])
+          else:
+              print('store1')
+          " 2>/dev/null || echo "store1")"
+          echo "Using server: ${server}"
+          
+          # Upload with token for persistent files
+          set +e
+          upload_response="$(curl -s -F "file=@${ZF}" \
+            -H "Authorization: Bearer ${GOFILE_TOKEN}" \
+            "https://${server}.gofile.io/contents/uploadfile")"
+          gf_status=$?
+          set -e
+          
+          if [ $gf_status -eq 0 ]; then
+            gf_url="$(echo "$upload_response" | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          if d.get('status')=='ok':
+              print(d['data']['downloadPage'])
+          else:
+              print('')
+          " 2>/dev/null)"
+            if [ -n "$gf_url" ]; then
+              echo "✅ Gofile: ${gf_url}"
+              echo "GOFILE_URL=${gf_url}" >> $GITHUB_ENV
+            else
+              echo "::warning::Gofile upload returned no link"
+              echo "GOFILE_STATUS=failed" >> $GITHUB_ENV
+            fi
+          else
+            echo "::warning::Gofile upload failed"
+            echo "GOFILE_STATUS=failed" >> $GITHUB_ENV
+          fi
+          echo "GOFILE_STATUS=${gf_status}" >> $GITHUB_ENV
+
       - name: ⬆️ Upload to SourceForge
         if: always()
         env:
@@ -462,11 +527,14 @@ jobs:
           echo "  ZIP Size: ${RECOVERY_ZIP_SIZE:-unknown}"
           echo ""
           echo "  Download Links:"
-          if [ -n "${GDRIVE_URL:-}" ]; then
-            echo "  📁 Google Drive: ${GDRIVE_URL}"
+          if [ -n "${GOFILE_URL:-}" ]; then
+            echo "  🚀 Gofile: ${GOFILE_URL}"
           fi
           if [ -n "${SF_URL:-}" ]; then
             echo "  📁 SourceForge: ${SF_URL}"
+          fi
+          if [ -n "${GDRIVE_URL:-}" ]; then
+            echo "  ☁️ Google Drive: ${GDRIVE_URL}"
           fi
           echo ""
           echo "  Flash from OrangeFox recovery"

@@ -522,13 +522,25 @@ jobs:
           echo "Folder ID: ${GDRIVE_FOLDER_ID}"
           
           # Test connection first
-          rclone lsd "gdrive:" --config "$RCLONE_CONF" --max-depth 0 2>&1 | head -5 || {
-            echo "::warning::Cannot access Google Drive - check service account permissions"
-            echo "GDRIVE_STATUS=failed" >> $GITHUB_ENV
-            exit 0
+          echo "Testing rclone connection..."
+          rclone lsd "gdrive:" --config "$RCLONE_CONF" --max-depth 0 2>&1 || {
+            echo "::warning::Cannot access Google Drive root - trying direct folder access..."
+            # Try listing the specific folder directly
+            rclone lsd "gdrive:${UPLOAD_DIR}/" --config "$RCLONE_CONF" 2>&1 || {
+              echo "::error::Google Drive authentication failed. Check:"
+              echo "1. GDRIVE_SA_KEY is a valid service account JSON key"
+              echo "2. Google Drive API is enabled in Google Cloud Console"
+              echo "3. Service account has been shared on the target folder"
+              echo "GDRIVE_STATUS=failed" >> $GITHUB_ENV
+              exit 0
+            }
           }
           
+          # Create remote folder
+          rclone mkdir "gdrive:${UPLOAD_DIR}" --config "$RCLONE_CONF" 2>/dev/null || true
+          
           # Upload with progress
+          echo "Starting upload..."
           rclone copy "$ZF" "gdrive:${UPLOAD_DIR}/" \
             --config "$RCLONE_CONF" \
             --progress --stats 30s 2>&1 || {
@@ -575,13 +587,12 @@ jobs:
           " 2>/dev/null || echo "store1")"
           echo "Using server: ${server}"
           
-          # Upload with token in form field (v3 API)
-          # Use --max-time for the overall operation, -m for connection timeout
+          # Upload with Bearer token in Authorization header (v3 API)
           set +e
           upload_response="$(curl -s --max-time 3600 --connect-timeout 30 \
+            -H "Authorization: Bearer ${GOFILE_TOKEN}" \
             -F "file=@${ZF}" \
-            -F "token=${GOFILE_TOKEN}" \
-            "https://${server}.gofile.io/contents/uploadfile" 2>&1)"
+            "https://${server}.gofile.io/uploadFile" 2>&1)"
           gf_status=$?
           set -e
           

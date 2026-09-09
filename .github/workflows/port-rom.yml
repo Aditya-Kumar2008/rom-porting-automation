@@ -502,17 +502,14 @@ jobs:
             exit 0
           fi
           
-          # Create rclone config (no leading spaces!)
-          cat > ~/.config/rclone/rclone.conf << EOF
-          [gdrive]
-          type = drive
-          scope = drive
-          service_account_file = /tmp/sa_key.json
-          root_folder_id = ${GDRIVE_FOLDER_ID}
-          EOF
-          
-          # Remove leading whitespace from config
-          sed -i 's/^[[:space:]]*//' ~/.config/rclone/rclone.conf
+          # Create rclone config
+          cat > ~/.config/rclone/rclone.conf <<EOF
+[gdrive]
+type = drive
+scope = drive
+service_account_file = /tmp/sa_key.json
+root_folder_id = ${GDRIVE_FOLDER_ID}
+EOF
           
           RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
           UPLOAD_DIR="ColorOS_Ruan_$(date +%Y%m%d)"

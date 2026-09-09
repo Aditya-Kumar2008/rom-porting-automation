@@ -574,25 +574,13 @@ jobs:
           
           echo "Uploading ${RECOVERY_ZIP} to Gofile (${RECOVERY_ZIP_SIZE:-unknown})..."
           
-          # Get best server (v3 API)
-          server="$(curl -s --max-time 30 https://api.gofile.io/servers | python3 -c "
-          import sys,json
-          d=json.load(sys.stdin)
-          if d.get('status')=='ok':
-              servers = d['data']['servers']
-              best = min(servers, key=lambda s: s.get('guests', 999))
-              print(best['name'])
-          else:
-              print('store1')
-          " 2>/dev/null || echo "store1")"
-          echo "Using server: ${server}"
-          
-          # Upload with Bearer token in Authorization header (v3 API)
+          # Gofile API v3: POST https://upload.gofile.io/uploadfile
+          # Auth via Authorization header
           set +e
           upload_response="$(curl -s --max-time 3600 --connect-timeout 30 \
             -H "Authorization: Bearer ${GOFILE_TOKEN}" \
             -F "file=@${ZF}" \
-            "https://${server}.gofile.io/uploadFile" 2>&1)"
+            "https://upload.gofile.io/uploadfile" 2>&1)"
           gf_status=$?
           set -e
           
@@ -616,6 +604,7 @@ jobs:
             fi
           else
             echo "::warning::Gofile upload failed (exit code ${gf_status})"
+            echo "Gofile response: ${upload_response}"
             echo "GOFILE_STATUS=failed" >> $GITHUB_ENV
           fi
           echo "GOFILE_STATUS=${gf_status}" >> $GITHUB_ENV

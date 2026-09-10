@@ -581,7 +581,7 @@ jobs:
           if [ -n "${PP}" ]; then
             echo "Found my_product at: ${PP}"
             # Update version display — ColorOS 16 from OnePlus 12R
-            grep -q "oplusrom.display" "${PP}" && sed -i "s|.*oplusrom.display.*|ro.oplusrom.display=16.0 | by ${DEVICE_NAME}|" "${PP}"
+            grep -q "oplusrom.display" "${PP}" && sed -i "s#.*oplusrom.display.*#ro.oplusrom.display=16.0 | by ${DEVICE_NAME}#" "${PP}"
             # Remove phone-specific screen hole/notch props (we're a tablet)
             sed -i '/screenhole/d' "${PP}"
             # Set tablet DPI (12.1" WQXGA tablet needs appropriate density)

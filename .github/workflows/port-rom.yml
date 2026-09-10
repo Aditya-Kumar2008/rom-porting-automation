@@ -289,53 +289,200 @@ jobs:
           ls -d extracted/*/ 2>/dev/null
           df -h / | tail -1
 
-      - name: "🔧 Download & Apply Custom ODM (Bridge Layer)"
+      - name: "🔧 Build Custom ODM Bridge Layer"
         run: |
-          # Old dev used a prebuilt custom ODM with Magisk resetprop, custom HALs, and SEpolicy
-          echo "Downloading custom ODM bridge layer for ColorOS..."
+          # The ODM is the critical bridge between ColorOS system and HyperOS vendor.
+          # Old dev (pipa→dizi) had Xiaomi→Xiaomi HALs. We (OnePlus 12R→ruan) need
+          # OnePlus→Xiaomi HALs. We use old dev's ODM as TEMPLATE for structure
+          # (resetprop, disable_ims.rc, oplus HAL stubs) but REPLACE all device
+          # identity props for our OnePlus 12R → Poco Pad 5G port.
+          
+          echo "=== Phase 1: Download ODM template from old dev's port ==="
           cd ${WORK_DIR}
-          mkdir -p odm_temp
-          # We use a static copy of the old dev's ODM since building it is very complex
-          aria2c -x16 -s16 https://pixeldrain.com/api/file/cR8mvzkx -o old_port.zip
-          unzip -o old_port.zip payload.bin || true
-          payload-dumper-go -p odm -o . payload.bin || true
-          if [ ! -f odm.img ]; then
-            # Extract from raw old zip if it was sparse format
-            7z x old_port.zip super.img -aoa
-            simg2img super.img super_raw.img && rm super.img
-            lpunpack -p odm_a super_raw.img . && rm super_raw.img
+          aria2c -x16 -s16 https://pixeldrain.com/api/file/cR8mvzkx -o old_port.zip || {
+            echo "::warning::Could not download ODM template. Will build minimal ODM."
+          }
+          
+          if [ -f old_port.zip ]; then
+            7z x old_port.zip super.img -aoa 2>/dev/null || true
+            if [ -f super.img ]; then
+              simg2img super.img super_raw.img && rm super.img
+              lpunpack -p odm_a super_raw.img . && rm super_raw.img
+              if [ -f odm_a.img ]; then
+                mkdir -p odm_template
+                fsck.erofs --extract=odm_template odm_a.img 2>&1 | tail -1
+                rm -f odm_a.img
+                echo "✅ ODM template extracted (old dev's pipa→dizi bridge)"
+              fi
+            fi
+            rm -f old_port.zip
           fi
           
-          if [ -f odm_a.img ]; then
-            fsck.erofs --extract=odm_extracted odm_a.img
-            rm -rf hyperos/extracted/odm
-            mv odm_extracted hyperos/extracted/odm
-            echo "✅ Custom ColorOS ODM bridge applied successfully!"
-          else
-            echo "⚠️ Failed to extract custom ODM. Proceeding with stock (MIGHT BOOTLOOP)."
-          fi
-          rm -f old_port.zip odm_a.img payload.bin
+          echo "=== Phase 2: Build our ODM from stock HyperOS + template ==="
+          ODM_DIR="${WORK_DIR}/hyperos/extracted/odm"
+          TEMPLATE="${WORK_DIR}/odm_template"
           
+          # Copy bridge binaries from template (these are generic ColorOS tools)
+          if [ -d "${TEMPLATE}" ]; then
+            # resetprop — Magisk tool for runtime prop override (essential)
+            [ -f "${TEMPLATE}/bin/resetprop" ] && {
+              mkdir -p "${ODM_DIR}/bin"
+              cp -v "${TEMPLATE}/bin/resetprop" "${ODM_DIR}/bin/"
+              chmod 755 "${ODM_DIR}/bin/resetprop"
+            }
+            
+            # oplus_performance.sh — dalvik heap tuning for ColorOS
+            [ -f "${TEMPLATE}/bin/oplus_performance.sh" ] && {
+              cp -v "${TEMPLATE}/bin/oplus_performance.sh" "${ODM_DIR}/bin/"
+              chmod 755 "${ODM_DIR}/bin/oplus_performance.sh"
+            }
+            
+            # Copy oplus HAL libraries (ColorOS system needs these stubs)
+            # These are the same across different ColorOS ports — they're framework stubs
+            for libdir in lib lib64; do
+              if [ -d "${TEMPLATE}/${libdir}" ]; then
+                mkdir -p "${ODM_DIR}/${libdir}"
+                cp -rn "${TEMPLATE}/${libdir}/"*.so "${ODM_DIR}/${libdir}/" 2>/dev/null || true
+                [ -d "${TEMPLATE}/${libdir}/soundfx" ] && cp -rn "${TEMPLATE}/${libdir}/soundfx" "${ODM_DIR}/${libdir}/"
+                echo "✅ Copied ${libdir} HAL stubs: $(ls ${ODM_DIR}/${libdir}/*.so 2>/dev/null | wc -l) libraries"
+              fi
+            done
+            
+            # Copy init scripts (disable_ims etc.)
+            if [ -d "${TEMPLATE}/etc/init" ]; then
+              mkdir -p "${ODM_DIR}/etc/init"
+              cp -rn "${TEMPLATE}/etc/init/"* "${ODM_DIR}/etc/init/" 2>/dev/null || true
+              echo "✅ Copied init scripts"
+            fi
+            
+            # Copy selinux precompiled policy if exists
+            if [ -d "${TEMPLATE}/etc/selinux" ]; then
+              mkdir -p "${ODM_DIR}/etc/selinux"
+              cp -rn "${TEMPLATE}/etc/selinux/"* "${ODM_DIR}/etc/selinux/" 2>/dev/null || true
+              echo "✅ Copied precompiled SELinux policy"
+            fi
+            
+            # Copy vintf manifest fragments
+            if [ -d "${TEMPLATE}/etc/vintf" ]; then
+              mkdir -p "${ODM_DIR}/etc/vintf"
+              cp -rn "${TEMPLATE}/etc/vintf/"* "${ODM_DIR}/etc/vintf/" 2>/dev/null || true
+            fi
+            
+            # Copy devices_config
+            if [ -d "${TEMPLATE}/etc/devices_config" ]; then
+              mkdir -p "${ODM_DIR}/etc/devices_config"
+              cp -rn "${TEMPLATE}/etc/devices_config/"* "${ODM_DIR}/etc/devices_config/" 2>/dev/null || true
+            fi
+            
+            # Copy camera config
+            if [ -d "${TEMPLATE}/etc/camera" ]; then
+              mkdir -p "${ODM_DIR}/etc/camera"
+              cp -rn "${TEMPLATE}/etc/camera/"* "${ODM_DIR}/etc/camera/" 2>/dev/null || true
+            fi
+            
+            rm -rf "${TEMPLATE}"
+          fi
+          
+          echo "=== Phase 3: Write ODM build.prop for OnePlus 12R → Poco Pad 5G ==="
+          # The old dev's ODM had pipa/SM8250/Xiaomi Pad 6 props.
+          # We REPLACE everything with our OnePlus 12R → ruan (Poco Pad 5G) identity.
+          
+          mkdir -p "${ODM_DIR}/etc"
+          
+          # Root-level build.prop just imports the etc one
+          cat > "${ODM_DIR}/build.prop" << 'ROOTPROP'
+          import /odm/etc/build.prop
+          ROOTPROP
+          sed -i 's/^          //' "${ODM_DIR}/build.prop"
+          
+          # The real ODM build.prop with ALL device identity for our port
+          cat > "${ODM_DIR}/etc/build.prop" << ODMPROP
+          ro.odm.product.cpu.abilist=arm64-v8a,armeabi-v7a,armeabi
+          ro.odm.product.cpu.abilist32=armeabi-v7a,armeabi
+          ro.odm.product.cpu.abilist64=arm64-v8a
+          # begin common build properties
+          ro.odm.build.date=$(date -u)
+          ro.odm.build.date.utc=$(date +%s)
+          ro.odm.build.fingerprint=Redmi/${DEVICE_CODENAME}/${DEVICE_CODENAME}:12/SKQ1.231214.001/V816.0.6.0.UNSCNXM:user/release-keys
+          ro.odm.build.id=SKQ1.231214.001
+          ro.odm.build.tags=release-keys
+          ro.odm.build.type=user
+          ro.odm.build.version.release=12
+          ro.odm.build.version.sdk=32
+          ro.product.odm.brand=${DONOR_BRAND}
+          ro.product.odm.device=${DEVICE_CODENAME}
+          ro.product.odm.manufacturer=${DONOR_BRAND}
+          ro.product.odm.model=CPH2585
+          ro.product.odm.name=${DEVICE_CODENAME}
+          ro.product.odm.marketname=${DEVICE_NAME}
+          ro.product.odm.cert=CPH2585
+          # end common build properties
+          #
+          # ADDITIONAL ODM BUILD PROPERTIES — OnePlus 12R → Poco Pad 5G port
+          #
+          ro.build.device_family=OP${CPU_MODEL}
+          qemu.hw.mainkeys=0
+          ro.product.oplus.cpuinfo=${CPU_MODEL}
+          ro.build.kernel.id=5.10.246
+          oplus.dex.tempcontrol=true
+          ro.zygote=zygote64
+          persist.sys.oplus.storage.otg_optimize=true
+          ro.vendor.qti.va_odm.support=1
+          ro.com.android.dataroaming=false
+          ro.vendor.config.oplus.uniform_single_sim=2
+          ro.separate.soft=CPH2585
+          ro.rom.featrue=allnet
+          ro.vendor.product.oem=CPH2585
+          ro.vendor.product.device.oem=CPH2585
+          ro.vendor.oplus.market.name=${DEVICE_NAME}
+          ro.sys.reserve.integrate=true
+          ro.product.manufacturer=${DONOR_BRAND}
+          ro.product.brand=${DONOR_BRAND}
+          ro.build.display.id=CPH2585_16.0_ColorOS_Port
+          ro.build.display.full_id=CPH2585_16.0_ColorOS_Port_$(date +%y%m%d)
+          ro.build.version.oplusrom=V16.0
+          ro.vendor.audio.policy.engine.odm=true
+          vendor.display.force_tonemapping=1
+          ro.oplus.display.screenSizeInches.primary=${SCREEN_SIZE}
+          ro.surface_flinger.primary_display_orientation=ORIENTATION_0
+          debug.sf.ignore_hwc_physical_display_orientation=true
+          ro.vendor.oplus.camera.frontCamSize=${FRONT_CAM}MP
+          ro.vendor.oplus.camera.backCamSize=${BACK_CAM}MP
+          ro.config.ringtone=OnePlus_new_feeling.ogg
+          ro.config.notification_sound=Whoop_doop.ogg
+          ro.config.alarm_alert=Cloudscape.ogg
+          # ColorOS my_* import chain
+          import /my_bigball/build.prop
+          import /my_carrier/build.prop
+          import /my_engineering/build.prop
+          import /my_heytap/build.prop
+          import /my_manifest/build.prop
+          import /my_product/build.prop
+          import /my_region/build.prop
+          import /my_stock/build.prop
+          # UI effects
+          ro.surface_flinger.supports_background_blur=1
+          persist.sys.oplus.anim_level=1
+          persist.sys.oplus.material_blur_switch=true
+          ODMPROP
+          sed -i 's/^          //' "${ODM_DIR}/etc/build.prop"
+          
+          echo "✅ ODM build.prop written for ${DONOR_BRAND} ${DONOR_MODEL} → ${DEVICE_NAME} (${DEVICE_CODENAME})"
+          echo "=== ODM contents ==="
+          find "${ODM_DIR}" -type f | head -30
+          echo "=== ODM identity props ==="
+          grep -E "brand|model|market|device_family|cpuinfo|display|camera" "${ODM_DIR}/etc/build.prop"
+
       - name: "COS&OOS: Vendor port"
         run: |
           HV="${WORK_DIR}/hyperos/extracted/vendor"
           CV="${WORK_DIR}/coloros/extracted/vendor"
-          ODM=""
-          if [ -f "${WORK_DIR}/hyperos/extracted/odm/etc/build.prop" ]; then
-            ODM="${WORK_DIR}/hyperos/extracted/odm/etc/build.prop"
-          elif [ -f "${HV}/odm/etc/build.prop" ]; then
-            ODM="${HV}/odm/etc/build.prop"
-          else
-            mkdir -p "${HV}/odm/etc"
-            ODM="${HV}/odm/etc/build.prop"
-            touch "${ODM}"
-          fi
+          
+          # Copy ColorOS user/group database into HyperOS vendor
+          # (ColorOS system UIDs/GIDs must match vendor expectations)
           cp -v "${CV}/etc/group" "${HV}/etc/group"
           cp -v "${CV}/etc/passwd" "${HV}/etc/passwd"
-          cp "${ODM}" "${ODM}.bak"
-          printf '\n# === ColorOS Port ===\nro.build.device_family=OP%s\nro.product.oplus.cpuinfo=%s\nro.product.brand=%s\nro.product.manufacturer=%s\nro.product.model=%s\nro.vendor.oplus.market.name=%s\nro.vendor.oplus.camera.frontCamSize=%s\nro.vendor.oplus.camera.backCamSize=%s\nro.oplus.display.screenSizeInches.primary=%s\nro.build.version.oplusrom=V15.0\nro.vendor.audio.policy.engine.odm=true\n' \
-            "${CPU_MODEL}" "${CPU_MODEL}" "${DONOR_BRAND}" "${DONOR_BRAND}" "${DEVICE_CODENAME}" "${DEVICE_NAME}" "${FRONT_CAM}" "${BACK_CAM}" "${SCREEN_SIZE}" >> "${ODM}"
-          grep -E "device_family|cpuinfo|brand|model|market|camera|display|oplusrom" "${ODM}"
+          echo "✅ Vendor user/group database updated for ColorOS compatibility"
 
       - name: "bbk Step 7: Clean system my_*"
         run: |
@@ -354,18 +501,49 @@ jobs:
             fi
           done
 
-      - name: "bbk Step 9: Modify my_manifest"
+      - name: "bbk Step 9: Modify my_manifest (OnePlus 12R → Poco Pad 5G)"
         run: |
-          M="${WORK_DIR}/coloros/extracted/system/my_manifest/etc/build.prop"
-          if [ -f "${M}" ]; then
+          # my_manifest defines the device identity that ColorOS sees at runtime.
+          # The stock ColorOS ROM has OnePlus 12R identity here.
+          # We must update it for our target: Poco Pad 5G (ruan).
+          
+          # Check both possible locations (root of system partition or inside system/)
+          M=""
+          for try in "${WORK_DIR}/coloros/extracted/system/my_manifest/build.prop" \
+                     "${WORK_DIR}/coloros/extracted/system/my_manifest/etc/build.prop" \
+                     "${WORK_DIR}/coloros/extracted/my_manifest/build.prop"; do
+            [ -f "$try" ] && M="$try" && break
+          done
+          
+          if [ -n "${M}" ]; then
+            echo "Found my_manifest at: ${M}"
             sed -i '/first.api/d' "${M}"
+            
+            # Update market name to our target device
             if grep -q "market.name" "${M}"; then
               sed -i "s|.*market.name.*|ro.vendor.oplus.market.name=${DEVICE_NAME}|" "${M}"
             else
               echo "ro.vendor.oplus.market.name=${DEVICE_NAME}" >> "${M}"
             fi
-            echo "my_manifest updated"
+            
+            # Update en market name too
+            if grep -q "market.enname" "${M}"; then
+              sed -i "s|.*market.enname.*|ro.vendor.oplus.market.enname=${DEVICE_NAME}|" "${M}"
+            fi
+            
+            # Update device/model references from OnePlus 12R to our target
+            # (but keep the format — just change the values)
+            if grep -q "ro.product.device=" "${M}"; then
+              sed -i "s|ro.product.device=.*|ro.product.device=${DEVICE_CODENAME}|" "${M}"
+            fi
+            if grep -q "ro.product.model=" "${M}"; then
+              sed -i "s|ro.product.model=.*|ro.product.model=CPH2585|" "${M}"
+            fi
+            
+            echo "✅ my_manifest updated for ${DEVICE_NAME}"
             cat "${M}"
+          else
+            echo "⚠️ my_manifest build.prop not found"
           fi
 
       - name: "bbk Step 10: Add apex"
@@ -390,18 +568,34 @@ jobs:
             rm -rf /tmp/overlay-tmp
           fi
 
-      - name: "bbk Steps 12-15: Modify my_product"
+      - name: "bbk Steps 12-15: Modify my_product (OnePlus 12R → Poco Pad 5G)"
         run: |
-          PP="${WORK_DIR}/coloros/extracted/system/my_product/etc/build.prop"
-          if [ -f "${PP}" ]; then
-            grep -q "oplusrom.display" "${PP}" && sed -i "s|.*oplusrom.display.*|ro.oplusrom.display=15.0 | by ${DEVICE_NAME}|" "${PP}"
+          # Check both possible locations
+          PP=""
+          for try in "${WORK_DIR}/coloros/extracted/system/my_product/build.prop" \
+                     "${WORK_DIR}/coloros/extracted/system/my_product/etc/build.prop" \
+                     "${WORK_DIR}/coloros/extracted/my_product/build.prop"; do
+            [ -f "$try" ] && PP="$try" && break
+          done
+          
+          if [ -n "${PP}" ]; then
+            echo "Found my_product at: ${PP}"
+            # Update version display — ColorOS 16 from OnePlus 12R
+            grep -q "oplusrom.display" "${PP}" && sed -i "s|.*oplusrom.display.*|ro.oplusrom.display=16.0 | by ${DEVICE_NAME}|" "${PP}"
+            # Remove phone-specific screen hole/notch props (we're a tablet)
             sed -i '/screenhole/d' "${PP}"
+            # Set tablet DPI (12.1" WQXGA tablet needs appropriate density)
             grep -q "lcd.density" "${PP}" && sed -i "s|lcd.density=.*|lcd.density=440|" "${PP}"
+            # Remove phone resolution scaling props (don't apply to tablet)
             for L in "ro.density.screenzoom.fdh" "ro.density.screenzoom.qdh" "ro.oplus.density.fhd_default" "ro.oplus.density.qhd_default" "ro.oplus.resolution.low" "ro.oplus.resolution.high"; do
               sed -i "/${L}/d" "${PP}"
             done
-            echo "my_product updated"
+            # Mark as tablet device type
+            grep -q "vpp.device.type" "${PP}" || echo "ro.oplus.vpp.device.type=pad" >> "${PP}"
+            echo "✅ my_product updated for tablet"
             cat "${PP}"
+          else
+            echo "⚠️ my_product build.prop not found"
           fi
 
       - name: "bbk Step 14: Add imports"

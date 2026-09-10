@@ -686,6 +686,7 @@ jobs:
 
       - name: "🗄️ Generate metadata.img & userdata.img"
         run: |
+          sudo apt-get update > /dev/null 2>&1 || true
           sudo apt-get install -y f2fs-tools e2fsprogs > /dev/null 2>&1 || true
           cd ${WORK_DIR}/output
 
@@ -702,9 +703,26 @@ jobs:
           # bootloader expands to fill the full partition on first boot.
           echo "Creating userdata.img (500 MiB, f2fs)..."
           dd if=/dev/zero of=userdata.img bs=1M count=500
-          make_f2fs -l data \
-            -O encrypt,extra_attr,inode_checksum,sb_checksum,quota,project_quota,casefold,compression \
-            -f userdata.img
+          
+          F2FS_CMD=""
+          if command -v mkfs.f2fs > /dev/null 2>&1; then
+            F2FS_CMD="mkfs.f2fs"
+          elif command -v make_f2fs > /dev/null 2>&1; then
+            F2FS_CMD="make_f2fs"
+          elif [ -f /sbin/mkfs.f2fs ]; then
+            F2FS_CMD="/sbin/mkfs.f2fs"
+          fi
+
+          if [ -n "$F2FS_CMD" ]; then
+            echo "Formatting with $F2FS_CMD..."
+            $F2FS_CMD -l data \
+              -O encrypt,extra_attr,inode_checksum,sb_checksum,quota,project_quota,casefold,compression \
+              -f userdata.img || $F2FS_CMD -l data -f userdata.img
+          else
+            echo "⚠️ mkfs.f2fs not found, falling back to ext4..."
+            mke2fs -t ext4 -L data -b 4096 -m 0 userdata.img
+          fi
+
           echo "✅ userdata.img: $(ls -lh userdata.img | awk '{print $5}')"
 
           echo "=== All output images ==="

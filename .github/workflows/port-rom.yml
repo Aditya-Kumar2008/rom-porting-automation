@@ -22,8 +22,8 @@ env:
   SCREEN_SIZE: "12.1"
   DONOR_BRAND: OnePlus
   DONOR_MODEL: "12R 5G"
-  SUPER_SIZE: "9663676416"
-  DYNAMIC_SIZE: "9659482112"
+  SUPER_SIZE: "9126805504"
+  DYNAMIC_SIZE: "9126805504"
 
 permissions:
   contents: write
@@ -289,6 +289,33 @@ jobs:
           ls -d extracted/*/ 2>/dev/null
           df -h / | tail -1
 
+      - name: "🔧 Download & Apply Custom ODM (Bridge Layer)"
+        run: |
+          # Old dev used a prebuilt custom ODM with Magisk resetprop, custom HALs, and SEpolicy
+          echo "Downloading custom ODM bridge layer for ColorOS..."
+          cd ${WORK_DIR}
+          mkdir -p odm_temp
+          # We use a static copy of the old dev's ODM since building it is very complex
+          aria2c -x16 -s16 https://pixeldrain.com/api/file/cR8mvzkx -o old_port.zip
+          unzip -o old_port.zip payload.bin || true
+          payload-dumper-go -p odm -o . payload.bin || true
+          if [ ! -f odm.img ]; then
+            # Extract from raw old zip if it was sparse format
+            7z x old_port.zip super.img -aoa
+            simg2img super.img super_raw.img && rm super.img
+            lpunpack -p odm_a super_raw.img . && rm super_raw.img
+          fi
+          
+          if [ -f odm_a.img ]; then
+            fsck.erofs --extract=odm_extracted odm_a.img
+            rm -rf hyperos/extracted/odm
+            mv odm_extracted hyperos/extracted/odm
+            echo "✅ Custom ColorOS ODM bridge applied successfully!"
+          else
+            echo "⚠️ Failed to extract custom ODM. Proceeding with stock (MIGHT BOOTLOOP)."
+          fi
+          rm -f old_port.zip odm_a.img payload.bin
+          
       - name: "COS&OOS: Vendor port"
         run: |
           HV="${WORK_DIR}/hyperos/extracted/vendor"
@@ -385,13 +412,6 @@ jobs:
             echo "Imports added"
           fi
 
-      - name: "bbk Legacy: Merge partitions"
-        run: |
-          S="${WORK_DIR}/coloros/extracted/system"
-          [ -d "${WORK_DIR}/coloros/extracted/system_ext" ] && cp -rn "${WORK_DIR}/coloros/extracted/system_ext/"* "${S}/" 2>/dev/null && echo "system_ext merged"
-          [ -d "${WORK_DIR}/coloros/extracted/product" ] && cp -rn "${WORK_DIR}/coloros/extracted/product/"* "${S}/" 2>/dev/null && echo "product merged"
-          echo "After merge: $(du -sh ${S})"
-
       - name: "🧹 Minor Debloat (Safe Mode)"
         run: |
           S="${WORK_DIR}/coloros/extracted/system"
@@ -415,19 +435,52 @@ jobs:
 
       - name: Repack system.img
         run: |
-          mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/system.img "${WORK_DIR}/coloros/extracted/system"
+          mkfs.erofs -zlz4 -b 4096 ${WORK_DIR}/output/system.img "${WORK_DIR}/coloros/extracted/system"
           ls -lh ${WORK_DIR}/output/system.img
           rm -rf "${WORK_DIR}/coloros/extracted/system"
 
+      - name: Repack system_ext.img
+        run: |
+          mkfs.erofs -zlz4 -b 4096 ${WORK_DIR}/output/system_ext.img "${WORK_DIR}/coloros/extracted/system_ext"
+          ls -lh ${WORK_DIR}/output/system_ext.img
+          rm -rf "${WORK_DIR}/coloros/extracted/system_ext"
+
+      - name: Repack product.img
+        run: |
+          mkfs.erofs -zlz4 -b 4096 ${WORK_DIR}/output/product.img "${WORK_DIR}/coloros/extracted/product"
+          ls -lh ${WORK_DIR}/output/product.img
+          rm -rf "${WORK_DIR}/coloros/extracted/product"
+
       - name: Repack vendor.img
         run: |
-          mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/vendor.img "${WORK_DIR}/hyperos/extracted/vendor"
+          mkfs.erofs -zlz4 -b 4096 ${WORK_DIR}/output/vendor.img "${WORK_DIR}/hyperos/extracted/vendor"
           ls -lh ${WORK_DIR}/output/vendor.img
           rm -rf "${WORK_DIR}/hyperos/extracted/vendor"
 
       - name: Repack odm.img
         run: |
-          [ -d "${WORK_DIR}/hyperos/extracted/odm" ] && mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/odm.img "${WORK_DIR}/hyperos/extracted/odm" && ls -lh ${WORK_DIR}/output/odm.img
+          [ -d "${WORK_DIR}/hyperos/extracted/odm" ] && mkfs.erofs -zlz4 -b 4096 ${WORK_DIR}/output/odm.img "${WORK_DIR}/hyperos/extracted/odm" && ls -lh ${WORK_DIR}/output/odm.img
+
+      - name: 🛠️ Patch vendor_boot (SELinux permissive)
+        run: |
+          cd ${WORK_DIR}/hyperos/images
+          if [ -f vendor_boot.img ]; then
+            wget -q https://github.com/chenxiaolong/systemd-bootchart/raw/master/src/magiskboot 2>/dev/null || wget -q https://github.com/topjohnwu/Magisk/releases/download/v26.1/Magisk-v26.1.apk
+            if [ -f Magisk-v26.1.apk ]; then
+              unzip -p Magisk-v26.1.apk lib/x86_64/libmagiskboot.so > magiskboot
+            fi
+            chmod +x magiskboot
+            ./magiskboot unpack vendor_boot.img
+            if [ -f header ]; then
+              sed -i 's/$/ androidboot.selinux=permissive/' header
+              ./magiskboot repack vendor_boot.img vendor_boot_patched.img
+              mv vendor_boot_patched.img vendor_boot.img
+              echo "✅ vendor_boot patched with permissive SELinux"
+            else
+              echo "⚠️ Could not unpack vendor_boot!"
+            fi
+            rm -f magiskboot kernel ramdisk header
+          fi
 
       - name: Copy HyperOS boot images
         run: |
@@ -455,7 +508,11 @@ jobs:
           ODM_SIZE=$(align $ODM_SIZE)
           VDLKM_SIZE=$(align $VDLKM_SIZE)
 
-          TOTAL=$((SYS_SIZE + VND_SIZE + ODM_SIZE + VDLKM_SIZE))
+                    SYS_EXT_SIZE=$(stat -c '%s' system_ext.img 2>/dev/null || echo 0)
+          PROD_SIZE=$(stat -c '%s' product.img 2>/dev/null || echo 0)
+          SYS_EXT_SIZE=$(align $SYS_EXT_SIZE)
+          PROD_SIZE=$(align $PROD_SIZE)
+          TOTAL=$((SYS_SIZE + VND_SIZE + ODM_SIZE + VDLKM_SIZE + SYS_EXT_SIZE + PROD_SIZE))
           echo "Total partition data: $((TOTAL / 1024 / 1024)) MiB"
           echo "Dynamic limit: $((DYNAMIC_SIZE / 1024 / 1024)) MiB (${DYNAMIC_SIZE})"
           echo "Super size: $((SUPER_SIZE / 1024 / 1024)) MiB (${SUPER_SIZE})"
@@ -485,9 +542,13 @@ jobs:
             LPMAKE_CMD="${LPMAKE_CMD} --partition vendor_dlkm_a:readonly:${VDLKM_SIZE}:qti_dynamic_partitions_a --image vendor_dlkm_a=vendor_dlkm.img"
           fi
 
-          # Empty partitions for product/system_ext (merged into system)
-          LPMAKE_CMD="${LPMAKE_CMD} --partition product_a:readonly:0:qti_dynamic_partitions_a"
-          LPMAKE_CMD="${LPMAKE_CMD} --partition system_ext_a:readonly:0:qti_dynamic_partitions_a"
+          if [ -f system_ext.img ] && [ "$SYS_EXT_SIZE" -gt 0 ]; then
+            LPMAKE_CMD="${LPMAKE_CMD} --partition system_ext_a:readonly:${SYS_EXT_SIZE}:qti_dynamic_partitions_a --image system_ext_a=system_ext.img"
+          fi
+
+          if [ -f product.img ] && [ "$PROD_SIZE" -gt 0 ]; then
+            LPMAKE_CMD="${LPMAKE_CMD} --partition product_a:readonly:${PROD_SIZE}:qti_dynamic_partitions_a --image product_a=product.img"
+          fi
 
           LPMAKE_CMD="${LPMAKE_CMD} --sparse --output super.img"
 
@@ -532,7 +593,7 @@ jobs:
           echo "[1/6] Flashing super.img (contains system+vendor+odm)..."
           fastboot flash super "${IMG}/super.img"
 
-          echo "[2/6] Flashing boot..."
+          echo "[1.5/6] Formatting data (requires for ColorOS)..."\n          fastboot -w\n\n          echo "[2/6] Flashing boot..."
           fastboot flash boot "${IMG}/boot.img"
 
           echo "[3/6] Flashing vendor_boot..."
@@ -571,7 +632,7 @@ jobs:
           echo [1/6] Flashing super.img...
           fastboot flash super images\super.img
 
-          echo [2/6] Flashing boot...
+          echo [1.5/6] Formatting data...\n          fastboot -w\n\n          echo [2/6] Flashing boot...
           fastboot flash boot images\boot.img
 
           echo [3/6] Flashing vendor_boot...

@@ -684,6 +684,32 @@ jobs:
           echo "=== ALL OUTPUT ==="
           ls -lh ${WORK_DIR}/output/
 
+      - name: "🗄️ Generate metadata.img & userdata.img"
+        run: |
+          sudo apt-get install -y f2fs-tools e2fsprogs > /dev/null 2>&1 || true
+          cd ${WORK_DIR}/output
+
+          # metadata.img — ext4, stores FBE encryption keys
+          # Stock ruan metadata partition is 16MB
+          echo "Creating metadata.img (16 MiB, ext4)..."
+          dd if=/dev/zero of=metadata.img bs=1M count=16
+          mke2fs -t ext4 -L metadata -b 4096 -m 0 metadata.img
+          echo "✅ metadata.img: $(ls -lh metadata.img | awk '{print $5}')"
+
+          # userdata.img — f2fs, formatted with encryption + quota features
+          # Stock ruan userdata uses f2fs with FBE. ~500MB gives proper f2fs
+          # structure (superblock, segment info, node/data areas) that the
+          # bootloader expands to fill the full partition on first boot.
+          echo "Creating userdata.img (500 MiB, f2fs)..."
+          dd if=/dev/zero of=userdata.img bs=1M count=500
+          make_f2fs -l data \
+            -O encrypt,extra_attr,inode_checksum,sb_checksum,quota,project_quota,casefold,compression \
+            -f userdata.img
+          echo "✅ userdata.img: $(ls -lh userdata.img | awk '{print $5}')"
+
+          echo "=== All output images ==="
+          ls -lh ${WORK_DIR}/output/
+
       - name: "🔧 Build super.img with lpmake"
         run: |
           cd ${WORK_DIR}/output
@@ -763,7 +789,7 @@ jobs:
           cp -v super.img "${FD}/images/"
 
           # Copy boot-related images
-          for img in boot.img vendor_boot.img vbmeta.img vbmeta_system.img dtbo.img modem.img; do
+          for img in boot.img vendor_boot.img vbmeta.img vbmeta_system.img dtbo.img modem.img metadata.img userdata.img; do
             [ -f "$img" ] && cp -v "$img" "${FD}/images/"
           done
 
@@ -784,24 +810,29 @@ jobs:
           CD="$(cd "$(dirname "$0")" && pwd)"
           IMG="${CD}/images"
 
-          echo "[1/6] Flashing super.img (contains system+vendor+odm)..."
+          echo "[1/7] Flashing super.img (contains system+vendor+odm)..."
           fastboot flash super "${IMG}/super.img"
 
-          echo "[1.5/6] Formatting data (requires for ColorOS)..."\n          fastboot -w\n\n          echo "[2/6] Flashing boot..."
+          echo "[2/7] Flashing crypto/data (metadata+userdata)..."
+          [ -f "${IMG}/metadata.img" ] && fastboot flash metadata "${IMG}/metadata.img"
+          [ -f "${IMG}/userdata.img" ] && fastboot flash userdata "${IMG}/userdata.img"
+          fastboot -w
+
+          echo "[3/7] Flashing boot..."
           fastboot flash boot "${IMG}/boot.img"
 
-          echo "[3/6] Flashing vendor_boot..."
+          echo "[4/7] Flashing vendor_boot..."
           fastboot flash vendor_boot "${IMG}/vendor_boot.img"
 
-          echo "[4/6] Disabling AVB verification..."
+          echo "[5/7] Disabling AVB verification..."
           fastboot flash vbmeta "${IMG}/vbmeta.img" --disable-verity --disable-verification 2>/dev/null || \
             fastboot flash vbmeta "${IMG}/vbmeta.img"
           [ -f "${IMG}/vbmeta_system.img" ] && fastboot flash vbmeta_system "${IMG}/vbmeta_system.img"
 
-          echo "[5/6] Flashing dtbo..."
+          echo "[6/7] Flashing dtbo..."
           [ -f "${IMG}/dtbo.img" ] && fastboot flash dtbo "${IMG}/dtbo.img"
 
-          echo "[6/6] Flashing modem..."
+          echo "[7/7] Flashing modem..."
           [ -f "${IMG}/modem.img" ] && fastboot flash modem "${IMG}/modem.img"
 
           echo ""
@@ -823,23 +854,28 @@ jobs:
           echo WARNING: This will ERASE all data!
           pause
 
-          echo [1/6] Flashing super.img...
+          echo [1/7] Flashing super.img...
           fastboot flash super images\super.img
 
-          echo [1.5/6] Formatting data...\n          fastboot -w\n\n          echo [2/6] Flashing boot...
+          echo [2/7] Flashing crypto/data...
+          if exist images\metadata.img fastboot flash metadata images\metadata.img
+          if exist images\userdata.img fastboot flash userdata images\userdata.img
+          fastboot -w
+
+          echo [3/7] Flashing boot...
           fastboot flash boot images\boot.img
 
-          echo [3/6] Flashing vendor_boot...
+          echo [4/7] Flashing vendor_boot...
           fastboot flash vendor_boot images\vendor_boot.img
 
-          echo [4/6] Disabling AVB...
+          echo [5/7] Disabling AVB...
           fastboot flash vbmeta images\vbmeta.img --disable-verity --disable-verification
           if exist images\vbmeta_system.img fastboot flash vbmeta_system images\vbmeta_system.img
 
-          echo [5/6] Flashing dtbo...
+          echo [6/7] Flashing dtbo...
           if exist images\dtbo.img fastboot flash dtbo images\dtbo.img
 
-          echo [6/6] Flashing modem...
+          echo [7/7] Flashing modem...
           if exist images\modem.img fastboot flash modem images\modem.img
 
           echo.

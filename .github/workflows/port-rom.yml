@@ -629,31 +629,32 @@ jobs:
 
       - name: Repack system.img
         run: |
-          mkfs.erofs -zlz4 -b 4096 ${WORK_DIR}/output/system.img "${WORK_DIR}/coloros/extracted/system"
+          # Use high-compression LZ4HC (required to fit ColorOS into the 8.5GB Poco Pad limit)
+          mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/system.img "${WORK_DIR}/coloros/extracted/system"
           ls -lh ${WORK_DIR}/output/system.img
           rm -rf "${WORK_DIR}/coloros/extracted/system"
 
       - name: Repack system_ext.img
         run: |
-          mkfs.erofs -zlz4 -b 4096 ${WORK_DIR}/output/system_ext.img "${WORK_DIR}/coloros/extracted/system_ext"
+          mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/system_ext.img "${WORK_DIR}/coloros/extracted/system_ext"
           ls -lh ${WORK_DIR}/output/system_ext.img
           rm -rf "${WORK_DIR}/coloros/extracted/system_ext"
 
       - name: Repack product.img
         run: |
-          mkfs.erofs -zlz4 -b 4096 ${WORK_DIR}/output/product.img "${WORK_DIR}/coloros/extracted/product"
+          mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/product.img "${WORK_DIR}/coloros/extracted/product"
           ls -lh ${WORK_DIR}/output/product.img
           rm -rf "${WORK_DIR}/coloros/extracted/product"
 
       - name: Repack vendor.img
         run: |
-          mkfs.erofs -zlz4 -b 4096 ${WORK_DIR}/output/vendor.img "${WORK_DIR}/hyperos/extracted/vendor"
+          mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/vendor.img "${WORK_DIR}/hyperos/extracted/vendor"
           ls -lh ${WORK_DIR}/output/vendor.img
           rm -rf "${WORK_DIR}/hyperos/extracted/vendor"
 
       - name: Repack odm.img
         run: |
-          [ -d "${WORK_DIR}/hyperos/extracted/odm" ] && mkfs.erofs -zlz4 -b 4096 ${WORK_DIR}/output/odm.img "${WORK_DIR}/hyperos/extracted/odm" && ls -lh ${WORK_DIR}/output/odm.img
+          [ -d "${WORK_DIR}/hyperos/extracted/odm" ] && mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/odm.img "${WORK_DIR}/hyperos/extracted/odm" && ls -lh ${WORK_DIR}/output/odm.img
 
       - name: 🛠️ Patch vendor_boot (SELinux permissive)
         run: |

@@ -491,7 +491,7 @@ jobs:
             [ -d "${S}/${d}" ] && rm -rf "${S}/${d}" && echo "Deleted ${d}"
           done
 
-      - name: "bbk Step 8: Add my_* to system"
+      - name: "bbk Step 8: Merge remaining partitions into system"
         run: |
           S="${WORK_DIR}/coloros/extracted/system"
           for d in my_product my_manifest my_region my_heytap my_bigball my_carrier my_engineering my_stock; do
@@ -500,6 +500,13 @@ jobs:
               echo "Added ${d}"
             fi
           done
+          
+          # Crucial for cross-porting: Xiaomi firmware often fails to mount product/system_ext 
+          # as separate dynamic partitions due to strict device mapper boundaries. 
+          # Merge them heavily into system root so they are natively available.
+          mkdir -p "${S}/system_ext" "${S}/product"
+          [ -d "${WORK_DIR}/coloros/extracted/system_ext" ] && cp -a "${WORK_DIR}/coloros/extracted/system_ext/"* "${S}/system_ext/" 2>/dev/null && echo "system_ext merged into system!"
+          [ -d "${WORK_DIR}/coloros/extracted/product" ] && cp -a "${WORK_DIR}/coloros/extracted/product/"* "${S}/product/" 2>/dev/null && echo "product merged into system!"
 
       - name: "bbk Step 9: Modify my_manifest (OnePlus 12R → Poco Pad 5G)"
         run: |
@@ -634,17 +641,9 @@ jobs:
           ls -lh ${WORK_DIR}/output/system.img
           rm -rf "${WORK_DIR}/coloros/extracted/system"
 
-      - name: Repack system_ext.img
+      - name: Remove product and system_ext build blocks
         run: |
-          mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/system_ext.img "${WORK_DIR}/coloros/extracted/system_ext"
-          ls -lh ${WORK_DIR}/output/system_ext.img
-          rm -rf "${WORK_DIR}/coloros/extracted/system_ext"
-
-      - name: Repack product.img
-        run: |
-          mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/product.img "${WORK_DIR}/coloros/extracted/product"
-          ls -lh ${WORK_DIR}/output/product.img
-          rm -rf "${WORK_DIR}/coloros/extracted/product"
+          echo "Product and System_Ext are now merged inside system to bypass DM_DEV_STATUS failure."
 
       - name: Repack vendor.img
         run: |
@@ -685,49 +684,10 @@ jobs:
           echo "=== ALL OUTPUT ==="
           ls -lh ${WORK_DIR}/output/
 
-      - name: "🗄️ Generate metadata.img & userdata.img"
+      - name: "🗄️ Skip static userdata generation"
         run: |
-          sudo apt-get update > /dev/null 2>&1 || true
-          sudo apt-get install -y f2fs-tools e2fsprogs > /dev/null 2>&1 || true
-          cd ${WORK_DIR}/output
-
-          # metadata.img — ext4, stores FBE encryption keys
-          # Stock ruan metadata partition is 16MB
-          echo "Creating metadata.img (16 MiB, ext4)..."
-          dd if=/dev/zero of=metadata.img bs=1M count=16
-          mke2fs -t ext4 -L metadata -b 4096 -m 0 metadata.img
-          echo "✅ metadata.img: $(ls -lh metadata.img | awk '{print $5}')"
-
-          # userdata.img — f2fs, formatted with encryption + quota features
-          # Stock ruan userdata uses f2fs with FBE. ~500MB gives proper f2fs
-          # structure (superblock, segment info, node/data areas) that the
-          # bootloader expands to fill the full partition on first boot.
-          echo "Creating userdata.img (500 MiB, f2fs)..."
-          dd if=/dev/zero of=userdata.img bs=1M count=500
-          
-          F2FS_CMD=""
-          if command -v mkfs.f2fs > /dev/null 2>&1; then
-            F2FS_CMD="mkfs.f2fs"
-          elif command -v make_f2fs > /dev/null 2>&1; then
-            F2FS_CMD="make_f2fs"
-          elif [ -f /sbin/mkfs.f2fs ]; then
-            F2FS_CMD="/sbin/mkfs.f2fs"
-          fi
-
-          if [ -n "$F2FS_CMD" ]; then
-            echo "Formatting with $F2FS_CMD..."
-            $F2FS_CMD -l data \
-              -O encrypt,extra_attr,inode_checksum,sb_checksum,quota,project_quota,casefold,compression \
-              -f userdata.img || $F2FS_CMD -l data -f userdata.img
-          else
-            echo "⚠️ mkfs.f2fs not found, falling back to ext4..."
-            mke2fs -t ext4 -L data -b 4096 -m 0 userdata.img
-          fi
-
-          echo "✅ userdata.img: $(ls -lh userdata.img | awk '{print $5}')"
-
-          echo "=== All output images ==="
-          ls -lh ${WORK_DIR}/output/
+          echo "Skipping static userdata/metadata generation. It causes magic mismatches in F2FS."
+          echo "We will use 'fastboot -w' in the flash script instead so the device formats itself."
 
       - name: "🔧 Build super.img with lpmake"
         run: |
@@ -747,11 +707,7 @@ jobs:
           ODM_SIZE=$(align $ODM_SIZE)
           VDLKM_SIZE=$(align $VDLKM_SIZE)
 
-                    SYS_EXT_SIZE=$(stat -c '%s' system_ext.img 2>/dev/null || echo 0)
-          PROD_SIZE=$(stat -c '%s' product.img 2>/dev/null || echo 0)
-          SYS_EXT_SIZE=$(align $SYS_EXT_SIZE)
-          PROD_SIZE=$(align $PROD_SIZE)
-          TOTAL=$((SYS_SIZE + VND_SIZE + ODM_SIZE + VDLKM_SIZE + SYS_EXT_SIZE + PROD_SIZE))
+                    TOTAL=$((SYS_SIZE + VND_SIZE + ODM_SIZE + VDLKM_SIZE))
           echo "Total partition data: $((TOTAL / 1024 / 1024)) MiB"
           echo "Dynamic limit: $((DYNAMIC_SIZE / 1024 / 1024)) MiB (${DYNAMIC_SIZE})"
           echo "Super size: $((SUPER_SIZE / 1024 / 1024)) MiB (${SUPER_SIZE})"
@@ -781,13 +737,9 @@ jobs:
             LPMAKE_CMD="${LPMAKE_CMD} --partition vendor_dlkm_a:readonly:${VDLKM_SIZE}:qti_dynamic_partitions_a --image vendor_dlkm_a=vendor_dlkm.img"
           fi
 
-          if [ -f system_ext.img ] && [ "$SYS_EXT_SIZE" -gt 0 ]; then
-            LPMAKE_CMD="${LPMAKE_CMD} --partition system_ext_a:readonly:${SYS_EXT_SIZE}:qti_dynamic_partitions_a --image system_ext_a=system_ext.img"
-          fi
-
-          if [ -f product.img ] && [ "$PROD_SIZE" -gt 0 ]; then
-            LPMAKE_CMD="${LPMAKE_CMD} --partition product_a:readonly:${PROD_SIZE}:qti_dynamic_partitions_a --image product_a=product.img"
-          fi
+          # Set empty partitions for product/system_ext (since they are merged into system)
+          LPMAKE_CMD="${LPMAKE_CMD} --partition product_a:readonly:0:qti_dynamic_partitions_a"
+          LPMAKE_CMD="${LPMAKE_CMD} --partition system_ext_a:readonly:0:qti_dynamic_partitions_a"
 
           LPMAKE_CMD="${LPMAKE_CMD} --sparse --output super.img"
 
@@ -808,7 +760,7 @@ jobs:
           cp -v super.img "${FD}/images/"
 
           # Copy boot-related images
-          for img in boot.img vendor_boot.img vbmeta.img vbmeta_system.img dtbo.img modem.img metadata.img userdata.img; do
+          for img in boot.img vendor_boot.img vbmeta.img vbmeta_system.img dtbo.img modem.img; do
             [ -f "$img" ] && cp -v "$img" "${FD}/images/"
           done
 
@@ -832,10 +784,9 @@ jobs:
           echo "[1/7] Flashing super.img (contains system+vendor+odm)..."
           fastboot flash super "${IMG}/super.img"
 
-          echo "[2/7] Flashing crypto/data (metadata+userdata)..."
-          [ -f "${IMG}/metadata.img" ] && fastboot flash metadata "${IMG}/metadata.img"
-          [ -f "${IMG}/userdata.img" ] && fastboot flash userdata "${IMG}/userdata.img"
-          fastboot -w
+          echo "[2/7] Erasing user data..."
+          fastboot erase userdata
+          fastboot erase metadata
 
           echo "[3/7] Flashing boot..."
           fastboot flash boot "${IMG}/boot.img"
@@ -876,10 +827,9 @@ jobs:
           echo [1/7] Flashing super.img...
           fastboot flash super images\super.img
 
-          echo [2/7] Flashing crypto/data...
-          if exist images\metadata.img fastboot flash metadata images\metadata.img
-          if exist images\userdata.img fastboot flash userdata images\userdata.img
-          fastboot -w
+          echo [2/7] Erasing user data...
+          fastboot erase userdata
+          fastboot erase metadata
 
           echo [3/7] Flashing boot...
           fastboot flash boot images\boot.img

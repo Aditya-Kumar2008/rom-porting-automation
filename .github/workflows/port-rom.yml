@@ -635,7 +635,7 @@ jobs:
           ls -lh ${WORK_DIR}/output/system.img
           rm -rf "${WORK_DIR}/coloros/extracted/system"
 
-- name: Repack vendor.img
+      - name: Repack vendor.img
         run: |
           mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/vendor.img "${WORK_DIR}/hyperos/extracted/vendor"
           ls -lh ${WORK_DIR}/output/vendor.img

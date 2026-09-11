@@ -501,12 +501,6 @@ jobs:
             fi
           done
           
-          # Crucial for cross-porting: Xiaomi firmware often fails to mount product/system_ext 
-          # as separate dynamic partitions due to strict device mapper boundaries. 
-          # Merge them heavily into system root so they are natively available.
-          mkdir -p "${S}/system_ext" "${S}/product"
-          [ -d "${WORK_DIR}/coloros/extracted/system_ext" ] && cp -a "${WORK_DIR}/coloros/extracted/system_ext/"* "${S}/system_ext/" 2>/dev/null && echo "system_ext merged into system!"
-          [ -d "${WORK_DIR}/coloros/extracted/product" ] && cp -a "${WORK_DIR}/coloros/extracted/product/"* "${S}/product/" 2>/dev/null && echo "product merged into system!"
 
       - name: "bbk Step 9: Modify my_manifest (OnePlus 12R → Poco Pad 5G)"
         run: |
@@ -641,11 +635,7 @@ jobs:
           ls -lh ${WORK_DIR}/output/system.img
           rm -rf "${WORK_DIR}/coloros/extracted/system"
 
-      - name: Remove product and system_ext build blocks
-        run: |
-          echo "Product and System_Ext are now merged inside system to bypass DM_DEV_STATUS failure."
-
-      - name: Repack vendor.img
+- name: Repack vendor.img
         run: |
           mkfs.erofs -zlz4hc,12 -b 4096 ${WORK_DIR}/output/vendor.img "${WORK_DIR}/hyperos/extracted/vendor"
           ls -lh ${WORK_DIR}/output/vendor.img
@@ -699,49 +689,43 @@ jobs:
           VND_SIZE=$(stat -c '%s' vendor.img)
           ODM_SIZE=$(stat -c '%s' odm.img 2>/dev/null || echo 0)
           VDLKM_SIZE=$(stat -c '%s' vendor_dlkm.img 2>/dev/null || echo 0)
+          PRD_SIZE=$(stat -c '%s' product.img 2>/dev/null || echo 0)
+          EXT_SIZE=$(stat -c '%s' system_ext.img 2>/dev/null || echo 0)
+          MI_EXT_SIZE=$(stat -c '%s' mi_ext.img 2>/dev/null || echo 0)
 
-          # Align to 4096 boundary
-          align() { echo $(( ($1 + 4095) / 4096 * 4096 )); }
-          SYS_SIZE=$(align $SYS_SIZE)
-          VND_SIZE=$(align $VND_SIZE)
-          ODM_SIZE=$(align $ODM_SIZE)
-          VDLKM_SIZE=$(align $VDLKM_SIZE)
+          # Validate total physical size
+          TOTAL=$((SYS_SIZE + VND_SIZE + ODM_SIZE + VDLKM_SIZE + PRD_SIZE + EXT_SIZE + MI_EXT_SIZE))
+          echo "Total payload size: $((TOTAL / 1024 / 1024)) MiB / $((SUPER_SIZE / 1024 / 1024)) MiB"
 
-                    TOTAL=$((SYS_SIZE + VND_SIZE + ODM_SIZE + VDLKM_SIZE))
-          echo "Total partition data: $((TOTAL / 1024 / 1024)) MiB"
-          echo "Dynamic limit: $((DYNAMIC_SIZE / 1024 / 1024)) MiB (${DYNAMIC_SIZE})"
-          echo "Super size: $((SUPER_SIZE / 1024 / 1024)) MiB (${SUPER_SIZE})"
+          # Use exactly exactly one dynamic group (like stock)
+          GROUP_SIZE=$SUPER_SIZE
 
-          if [ "$TOTAL" -gt "$DYNAMIC_SIZE" ]; then
-            echo "::error::Total ($TOTAL) exceeds dynamic partition limit ($DYNAMIC_SIZE)!"
-            echo "::error::Need to debloat $((( TOTAL - DYNAMIC_SIZE ) / 1024 / 1024)) MiB more"
-            exit 1
-          fi
-
-          GROUP_SIZE=$TOTAL
-
-          # Build lpmake command
+          # Build lpmake command without _a suffix
           LPMAKE_CMD="lpmake"
           LPMAKE_CMD="${LPMAKE_CMD} --metadata-size 65536"
-          LPMAKE_CMD="${LPMAKE_CMD} --metadata-slots 3"
+          LPMAKE_CMD="${LPMAKE_CMD} --metadata-slots 2"
           LPMAKE_CMD="${LPMAKE_CMD} --device super:${SUPER_SIZE}"
-          LPMAKE_CMD="${LPMAKE_CMD} --group qti_dynamic_partitions_a:${GROUP_SIZE}"
-          LPMAKE_CMD="${LPMAKE_CMD} --partition system_a:readonly:${SYS_SIZE}:qti_dynamic_partitions_a --image system_a=system.img"
-          LPMAKE_CMD="${LPMAKE_CMD} --partition vendor_a:readonly:${VND_SIZE}:qti_dynamic_partitions_a --image vendor_a=vendor.img"
+          LPMAKE_CMD="${LPMAKE_CMD} --group qti_dynamic_partitions:${GROUP_SIZE}"
+          
+          LPMAKE_CMD="${LPMAKE_CMD} --partition system:readonly:${SYS_SIZE}:qti_dynamic_partitions --image system=system.img"
+          LPMAKE_CMD="${LPMAKE_CMD} --partition vendor:readonly:${VND_SIZE}:qti_dynamic_partitions --image vendor=vendor.img"
 
           if [ -f odm.img ] && [ "$ODM_SIZE" -gt 0 ]; then
-            LPMAKE_CMD="${LPMAKE_CMD} --partition odm_a:readonly:${ODM_SIZE}:qti_dynamic_partitions_a --image odm_a=odm.img"
+            LPMAKE_CMD="${LPMAKE_CMD} --partition odm:readonly:${ODM_SIZE}:qti_dynamic_partitions --image odm=odm.img"
           fi
-
           if [ -f vendor_dlkm.img ] && [ "$VDLKM_SIZE" -gt 0 ]; then
-            LPMAKE_CMD="${LPMAKE_CMD} --partition vendor_dlkm_a:readonly:${VDLKM_SIZE}:qti_dynamic_partitions_a --image vendor_dlkm_a=vendor_dlkm.img"
+            LPMAKE_CMD="${LPMAKE_CMD} --partition vendor_dlkm:readonly:${VDLKM_SIZE}:qti_dynamic_partitions --image vendor_dlkm=vendor_dlkm.img"
           fi
-
-          # Set empty partitions for product/system_ext (since they are merged into system)
-          LPMAKE_CMD="${LPMAKE_CMD} --partition product_a:readonly:0:qti_dynamic_partitions_a"
-          LPMAKE_CMD="${LPMAKE_CMD} --partition system_ext_a:readonly:0:qti_dynamic_partitions_a"
-
-          LPMAKE_CMD="${LPMAKE_CMD} --sparse --output super.img"
+          if [ -f product.img ] && [ "$PRD_SIZE" -gt 0 ]; then
+            LPMAKE_CMD="${LPMAKE_CMD} --partition product:readonly:${PRD_SIZE}:qti_dynamic_partitions --image product=product.img"
+          fi
+          if [ -f system_ext.img ] && [ "$EXT_SIZE" -gt 0 ]; then
+            LPMAKE_CMD="${LPMAKE_CMD} --partition system_ext:readonly:${EXT_SIZE}:qti_dynamic_partitions --image system_ext=system_ext.img"
+          fi
+          if [ -f mi_ext.img ] && [ "$MI_EXT_SIZE" -gt 0 ]; then
+            LPMAKE_CMD="${LPMAKE_CMD} --partition mi_ext:readonly:${MI_EXT_SIZE}:qti_dynamic_partitions --image mi_ext=mi_ext.img"
+          fi
+LPMAKE_CMD="${LPMAKE_CMD} --sparse --output super.img"
 
           echo "=== Running lpmake ==="
           echo "$LPMAKE_CMD"

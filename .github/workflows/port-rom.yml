@@ -725,7 +725,7 @@ jobs:
           if [ -f mi_ext.img ] && [ "$MI_EXT_SIZE" -gt 0 ]; then
             LPMAKE_CMD="${LPMAKE_CMD} --partition mi_ext:readonly:${MI_EXT_SIZE}:qti_dynamic_partitions --image mi_ext=mi_ext.img"
           fi
-LPMAKE_CMD="${LPMAKE_CMD} --sparse --output super.img"
+          LPMAKE_CMD="${LPMAKE_CMD} --sparse --output super.img"
 
           echo "=== Running lpmake ==="
           echo "$LPMAKE_CMD"
